@@ -18,6 +18,8 @@ library(doParallel)
 library(foreach)
 library(enrichR)
 library(plotly)
+library(shinyjs)  # Add this library at the beginning
+
 
 # Define EnrichR databases to use
 enrichr_dbs <- c("KEGG_2021_Human", "GO Molecular Function 2023", "GO Biological Process 2023", "GWAS Catalog 2023", "UK Biobank GWAS v1")
@@ -92,13 +94,12 @@ dif_expr <- function(count_data, phenotype_data) {
   fit <- lmFit(v, design)
   fit <- eBayes(fit)
   
-  initial_results <- topTable(fit, coef = NULL, number = Inf, genelist = fit$genes, adjust.method = "BH",
+  initial_results <- topTable(fit, coef = 1, number = Inf, genelist = fit$genes, adjust.method = "BH",
                               sort.by = "B", resort.by = NULL, p.value = 0.05, lfc = 0, confint = FALSE)
   initial_results$Ensembl_IDs <- row.names(initial_results)
-  initial_results$Log_Fold_Change <- log2(initial_results[,2]/initial_results[,3])
+
   
-  
-  initial_results <- initial_results[, c("Ensembl_IDs", "adj.P.Val", "log_fold_change")]
+  initial_results <- initial_results[, c("Ensembl_IDs", "adj.P.Val",  "logFC"  )]
   
   initial_results <- initial_results[order(initial_results$adj.P.Val), ]
   top50_results <- head(initial_results, 50)
@@ -132,7 +133,7 @@ dif_expr <- function(count_data, phenotype_data) {
   final_results <- merge(top20_results, G_list, by.x = "Ensembl_IDs", by.y = "Gene stable ID", all.x = TRUE)
   
   colnames(final_results)[5] <- "Protein Name" 
-
+  
   return(final_results)
 }
 
@@ -179,8 +180,6 @@ combine_enrichr_results <- function(enrichr_results) {
   }))
   return(as.data.frame(combined_results))
 }
-
-# PCA Function with Parallel Processing, Sliders, and Hover
 Make_PCA <- function(count_data, phenotype_data, n_components) {
   # Read data
   if (grepl("\\.csv$", count_data)) {
@@ -199,7 +198,7 @@ Make_PCA <- function(count_data, phenotype_data, n_components) {
   
   # Transpose and prepare the data frame
   df <- data.frame(t(Countsmat))
-  df$phenotype <- as.integer(disease_fact)
+  df$phenotype <- disease_fact
   df$Sample <- rownames(df)
   
   # Debugging prints
@@ -222,7 +221,7 @@ Make_PCA <- function(count_data, phenotype_data, n_components) {
   df_numeric <- df_numeric[, !zero_var_columns]
   
   # Ensure 'phenotype' and 'Sample' columns are not removed
-  df_numeric$phenotype <- as.integer(disease_fact)
+  df_numeric$phenotype <- disease_fact
   df_numeric$Sample <- rownames(df)
   
   # Debugging prints
@@ -243,10 +242,12 @@ Make_PCA <- function(count_data, phenotype_data, n_components) {
   pca_plot <- ggplot(pca_df, aes_string(x = "PC1", y = "PC2", color = "Phenotype", text = "Sample")) +
     geom_point() +
     labs(title = "PCA Plot", x = "PC1", y = "PC2") +
+    scale_color_discrete(name = "Phenotype") +  # Change legend title
     theme_minimal()
   
   return(ggplotly(pca_plot, tooltip = "text"))
 }
+
 
 # UMAP Function with Parallel Processing, Sliders, and Hover
 Make_UMAP <- function(count_data, phenotype_data, n_neighbors) {
@@ -310,11 +311,19 @@ Make_Volcano <- function(results, p_value_threshold, log_fc_threshold) {
   return(ggplotly(volcano_plot, tooltip = "text"))
 }
 
+library(shinyjs)  # Add this library at the beginning
+
 # UI
 ui <- fluidPage(
+  useShinyjs(),  # Initialize shinyjs
   theme = shinytheme("cyborg"),
   tags$head(
-    tags$link(rel = "stylesheet", type = "text/css", href = "custom.css")
+    tags$link(rel = "stylesheet", type = "text/css", href = "custom.css"),
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('notify', function(message) {
+        alert(message);
+      });
+    "))
   ),
   titlePanel("JCAP Differential Expression and Feature Selection on RNA SEQ data"),
   sidebarLayout(
@@ -335,26 +344,27 @@ ui <- fluidPage(
       downloadButton("output", "Export Results as CSV"),
       downloadButton("All_genes","Export Enrichr results for all 20 genes as a CSV"),
       downloadButton("Up_genes","Export Enrichr results for upregulated genes as a CSV"),
-      downloadButton("Down_genes","Export enrichr results for downregulated genes as a CSV")
+      downloadButton("Down_genes","Export Enrichr results for downregulated genes as a CSV")
     ),
     mainPanel(
-      tabsetPanel(
-        tabPanel("Differential Expression Results", DTOutput("Dif_expr_results")),
-        tabPanel("PCA Plot", plotlyOutput("pcaplot")),  # Change to plotlyOutput
-        tabPanel("UMAP Plot", plotlyOutput("umapplot")),  # Change to plotlyOutput
-        tabPanel("Volcano Plot", plotlyOutput("volcano_plot")),  # Change to plotlyOutput
-        tabPanel("Pathway Enrichment", 
-                 tabsetPanel(
-                   tabPanel("All Genes", DTOutput("enrich_table_all")),
-                   tabPanel("Upregulated Genes", DTOutput("enrich_table_up")),
-                   tabPanel("Downregulated Genes", DTOutput("enrich_table_down"))
-                 )
-        ),
-        tabPanel("Read Me", verbatimTextOutput("readme"))  # Add a new tab for README
+      tabsetPanel(id = "main_tabset",
+                  tabPanel("Differential Expression Results", DTOutput("Dif_expr_results")),
+                  tabPanel("PCA Plot", plotlyOutput("pcaplot")),  # Change to plotlyOutput
+                  tabPanel("UMAP Plot", plotlyOutput("umapplot")),  # Change to plotlyOutput
+                  tabPanel("Volcano Plot", plotlyOutput("volcano_plot")),  # Change to plotlyOutput
+                  tabPanel("Pathway Enrichment", 
+                           tabsetPanel(
+                             tabPanel("All Genes", DTOutput("enrich_table_all")),
+                             tabPanel("Upregulated Genes", DTOutput("enrich_table_up")),
+                             tabPanel("Downregulated Genes", DTOutput("enrich_table_down"))
+                           )
+                  ),
+                  tabPanel("Read Me", verbatimTextOutput("readme"))  # Add a new tab for README
       )
     )
   )
 )
+
 
 # Server
 server <- function(input, output, session) {
@@ -363,11 +373,13 @@ server <- function(input, output, session) {
   final_results <- reactiveVal()
   
   observeEvent(input$running_Dif, {
+    shinyjs::info("Starting Differential Expression Analysis...")
     res <- dif_expr(count_data = input$counts_input$datapath, phenotype_data = input$phenotype_input$datapath)
     final_results(res)
     output$Dif_expr_results <- renderDT({
       datatable(res)
     })
+    session$sendCustomMessage("notify", "Differential Expression Analysis Completed!")
   })
   
   output$output <- downloadHandler(
@@ -378,67 +390,93 @@ server <- function(input, output, session) {
   )
   
   observeEvent(input$plot_pca, {
+    req(input$counts_input, input$phenotype_input)
+    shinyjs::info("Generating PCA Plot...")
     output$pcaplot <- renderPlotly({
       Make_PCA(count_data = input$counts_input$datapath, phenotype_data = input$phenotype_input$datapath, n_components = input$n_components_pca)
     })
+    session$sendCustomMessage("notify", "PCA Plot Generated!")
   })
   
   observeEvent(input$plot_umap, {
+    req(input$counts_input, input$phenotype_input)
+    shinyjs::info("Generating UMAP Plot...")
     output$umapplot <- renderPlotly({
       Make_UMAP(count_data = input$counts_input$datapath, phenotype_data = input$phenotype_input$datapath, n_neighbors = input$n_neighbors_umap)
     })
+    session$sendCustomMessage("notify", "UMAP Plot Generated!")
   })
   
   observeEvent(input$plot_volcano, {
+    req(final_results())
+    shinyjs::info("Generating Volcano Plot...")
     output$volcano_plot <- renderPlotly({
       Make_Volcano(final_results(), input$p_value_threshold, input$log_fc_threshold)
     })
+    session$sendCustomMessage("notify", "Volcano Plot Generated!")
   })
   
   observeEvent(input$pathway_all, {
+    req(final_results())
+    shinyjs::info("Performing Pathway Enrichment (All Genes)...")
     res <- final_results()
     enrich_res <- enrich_all_genes(res)
     output$enrich_table_all <- renderDT({
       datatable(enrich_res)
     })
+    session$sendCustomMessage("notify", "Pathway Enrichment (All Genes) Completed!")
   })
-  output$All_genes<- downloadHandler(
+  
+  output$All_genes <- downloadHandler(
     filename = "Enrichment_on_all_genes.csv",
     content = function(file) {
       write.csv(combined_res_all, file, row.names = FALSE)
-    })
+    }
+  )
   
   observeEvent(input$pathway_up, {
+    req(final_results())
+    shinyjs::info("Performing Pathway Enrichment (Upregulated Genes)...")
     res <- final_results()
-    enrich_res_up<- enrich_up_genes(res)
+    enrich_res_up <- enrich_up_genes(res)
     output$enrich_table_up <- renderDT({
       datatable(enrich_res_up)
-    })  })
-  output$Up_genes<- downloadHandler(
+    })  
+    session$sendCustomMessage("notify", "Pathway Enrichment (Upregulated Genes) Completed!")
+  })
+  
+  output$Up_genes <- downloadHandler(
     filename = "Enrichment_on_upregulated_genes.csv",
     content = function(file) {
       write.csv(combined_res_up(), file, row.names = FALSE)
-    })
-  
+    }
+  )
   
   observeEvent(input$pathway_down, {
+    req(final_results())
+    shinyjs::info("Performing Pathway Enrichment (Downregulated Genes)...")
     res <- final_results()
-    enrich_res_down<- enrich_down_genes(res)
+    enrich_res_down <- enrich_down_genes(res)
     output$enrich_table_down <- renderDT({
       datatable(enrich_res_down)
-    }) })
+    }) 
+    session$sendCustomMessage("notify", "Pathway Enrichment (Downregulated Genes) Completed!")
+  })
   
-  output$Downn_genes<- downloadHandler(
-    filename = "Enrichment_on_upregulated_genes.csv",
+  output$Down_genes <- downloadHandler(
+    filename = "Enrichment_on_downregulated_genes.csv",
     content = function(file) {
       write.csv(combined_res_down(), file, row.names = FALSE)
-    })
+    }
+  )
+  
   # Render the README file content
-  output$readme <- renderPrint({readme_path <- normalizePath("RNA_SEQ APP_readme.txt", mustWork = TRUE)
-    
-    readLines("RNA_SEQ APP_readme.txt" )  # Make sure to place your README.txt in the same directory as the app
+  output$readme <- renderPrint({
+    readme_path <- normalizePath("RNA_SEQ APP_readme.txt", mustWork = TRUE)
+    readLines(readme_path)  # Make sure to place your README.txt in the same directory as the app
   })
 }
+
 
 # Run the application
 shinyApp(ui = ui, server = server)
