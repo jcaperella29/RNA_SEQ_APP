@@ -18,6 +18,7 @@ library(doParallel)
 library(foreach)
 library(enrichR)
 library(plotly)
+library(edgeR)
 library(shinyjs)  # Add this library at the beginning
 
 
