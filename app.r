@@ -1,4 +1,3 @@
-
 # Load necessary libraries
 library(tidyverse)
 library(limma)
@@ -19,7 +18,112 @@ library(foreach)
 library(enrichR)
 library(plotly)
 library(edgeR)
-library(shinyjs)  # Add this library at the beginning
+library(shinyjs)
+library(pROC)  # For AUC calculation
+library(pwr)
+# Power Calculation Function for Two or More Classes
+calculate_power <- function(phenotype_data, effect_size = 0.5, alpha = 0.05) {
+  # Count the number of samples in each class
+  class_counts <- table(phenotype_data)
+  
+  # Get the number of groups
+  k <- length(class_counts)
+  
+  if (k == 2) {
+    # For two classes, perform a two-sample t-test power calculation
+    n_group1 <- class_counts[1]
+    n_group2 <- class_counts[2]
+    
+    # Perform power calculation for a two-sample t-test
+    result <- pwr.t.test(n = min(n_group1, n_group2), d = effect_size, sig.level = alpha, power = NULL, type = "two.sample")
+    
+  } else {
+    # For more than two classes, perform a one-way ANOVA power calculation
+    n_harmonic <- 1 / mean(1 / class_counts)
+    
+    # Perform power calculation for a one-way ANOVA
+    result <- pwr.anova.test(k = k, n = n_harmonic, f = effect_size, sig.level = alpha, power = NULL)
+  }
+  
+  return(result)
+}
+
+
+# Required Libraries
+library(randomForest)
+library(caret)
+library(pROC)
+
+# Regularized Random Forest Classification Function
+regularized_random_forest <- function(counts_data, phenotype_data, selected_genes) {
+  set.seed(1)
+  
+  # Load expression data
+  if (grepl("\\.csv$", counts_data)) {
+    Exprmat <- read.csv(counts_data, row.names = 1)
+  } else {
+    Exprmat <- read.table(counts_data, header = TRUE, row.names = 1)
+  }
+  
+  # Load phenotype data
+  if (grepl("\\.csv$", phenotype_data)) {
+    disease <- read.csv(phenotype_data, row.names = 1)
+  } else {
+    disease <- read.table(phenotype_data, header = TRUE, row.names = 1)
+  }
+  
+  # Prepare data frame
+  df <- data.frame(t(Exprmat))
+  df$phenotype <- as.factor(disease[, 1])
+  
+  # Ensure selected_genes exist in the data
+  selected_genes <- intersect(selected_genes, colnames(df))
+  if (length(selected_genes) == 0) {
+    stop("None of the selected genes are found in the expression data.")
+  }
+  
+  # Subset the data to include only selected genes and phenotype
+  df_subset <- df[, c(selected_genes, "phenotype")]
+  
+  # Split the data into training and testing sets
+  set.seed(123)
+  train_index <- createDataPartition(df_subset$phenotype, p = 0.7, list = FALSE)
+  train_data <- df_subset[train_index, ]
+  test_data <- df_subset[-train_index, ]
+  
+  # Train Random Forest with regularization parameters
+  model <- randomForest(
+    x = train_data[, -which(colnames(train_data) == "phenotype")], 
+    y = train_data$phenotype,
+    importance = TRUE,
+    ntree = 500,          # Number of trees
+    mtry = 3,             # Number of features considered at each split
+    nodesize = 5          # Minimum size of terminal nodes
+  )
+  
+  # Make predictions
+  predictions <- predict(model, newdata = test_data[, -which(colnames(test_data) == "phenotype")])
+  
+  # Evaluate model performance
+  confusion_matrix <- confusionMatrix(predictions, test_data$phenotype)
+  
+  accuracy <- confusion_matrix$overall['Accuracy']
+  sensitivity <- confusion_matrix$byClass['Sensitivity']
+  specificity <- confusion_matrix$byClass['Specificity']
+  
+  # Calculate AUC
+  auc <- roc(response = as.numeric(test_data$phenotype), predictor = as.numeric(predictions))$auc
+  
+  prevalence <- mean(test_data$phenotype == levels(test_data$phenotype)[1])
+  
+  metrics <- data.frame(
+    Metric = c("Accuracy", "Sensitivity", "Specificity", "AUC", "Prevalence"),
+    Value = c(accuracy, sensitivity, specificity, auc, prevalence)
+  )
+  
+  return(metrics)
+}
+
 
 
 # Define EnrichR databases to use
@@ -98,10 +202,8 @@ dif_expr <- function(count_data, phenotype_data) {
   initial_results <- topTable(fit, coef = 1, number = Inf, genelist = fit$genes, adjust.method = "BH",
                               sort.by = "B", resort.by = NULL, p.value = 0.05, lfc = 0, confint = FALSE)
   initial_results$Ensembl_IDs <- row.names(initial_results)
-
   
   initial_results <- initial_results[, c("Ensembl_IDs", "adj.P.Val",  "logFC"  )]
-  
   initial_results <- initial_results[order(initial_results$adj.P.Val), ]
   top50_results <- head(initial_results, 50)
   
@@ -138,6 +240,10 @@ dif_expr <- function(count_data, phenotype_data) {
   return(final_results)
 }
 
+  
+
+
+
 # Pathway Analysis Functions with Combined Results
 enrich_genes <- function(genes) {
   if (length(genes) == 0) {
@@ -154,20 +260,28 @@ enrich_all_genes <- function(final_results) {
   combined_res_all <<- combine_enrichr_results(enrich_res)
   return(combined_res_all)
 }
-
 enrich_up_genes <- function(final_results) {
-  up_genes <- final_results[,4][final_results$log_fold_change > 0]
-  enrich_res <- enrich_genes(up_genes)
-  combined_res_up<<- combine_enrichr_results(enrich_res)
-  return(combined_res_up)
+  up_genes <- final_results[,4][final_results$logFC > 0]
+  if (length(up_genes) == 0) {
+    return(data.frame(Message = "No upregulated genes found"))
+  } else {
+    enrich_res <- enrich_genes(up_genes)
+    combined_res_up <<- combine_enrichr_results(enrich_res)
+    return(combined_res_up)
+  }
 }
 
 enrich_down_genes <- function(final_results) {
-  down_genes <- final_results[,4][final_results$log_fold_change < 0]
-  enrich_res <- enrich_genes(down_genes)
-  combined_res_down <<- combine_enrichr_results(enrich_res)
-  return(combined_res_down)
+  down_genes <- final_results[,4][final_results$logFC < 0]
+  if (length(down_genes) == 0) {
+    return(data.frame(Message = "No downregulated genes found"))
+  } else {
+    enrich_res <- enrich_genes(down_genes)
+    combined_res_down <<- combine_enrichr_results(enrich_res)
+    return(combined_res_down)
+  }
 }
+
 
 combine_enrichr_results <- function(enrichr_results) {
   combined_results <- do.call(rbind, lapply(names(enrichr_results), function(db) {
@@ -181,6 +295,7 @@ combine_enrichr_results <- function(enrichr_results) {
   }))
   return(as.data.frame(combined_results))
 }
+
 Make_PCA <- function(count_data, phenotype_data, n_components) {
   # Read data
   if (grepl("\\.csv$", count_data)) {
@@ -249,7 +364,6 @@ Make_PCA <- function(count_data, phenotype_data, n_components) {
   return(ggplotly(pca_plot, tooltip = "text"))
 }
 
-
 # UMAP Function with Parallel Processing, Sliders, and Hover
 Make_UMAP <- function(count_data, phenotype_data, n_neighbors) {
   if (grepl("\\.csv$", count_data)) {
@@ -303,18 +417,14 @@ Make_UMAP <- function(count_data, phenotype_data, n_neighbors) {
 
 # Volcano Plot Function with Sliders and Hover
 Make_Volcano <- function(results, p_value_threshold, log_fc_threshold) {
-  volcano_plot <- ggplot(results, aes(x = log_fold_change, y = -log10(adj.P.Val), text = hgnc_symbol)) +
-    geom_point(aes(color = adj.P.Val < p_value_threshold & abs(log_fold_change) > log_fc_threshold)) +
+  volcano_plot <- ggplot(results, aes(x = logFC, y = -log10(adj.P.Val), text = results[,4])) +
+    geom_point(aes(color = adj.P.Val < p_value_threshold & abs(logFC) > log_fc_threshold)) +
     scale_color_manual(values = c("black", "red")) +
     labs(title = "Volcano Plot", x = "Log2 Fold Change", y = "-Log10 Adjusted P-value") +
     theme_minimal()
   
   return(ggplotly(volcano_plot, tooltip = "text"))
 }
-
-library(shinyjs)  # Add this library at the beginning
-
-# UI
 ui <- fluidPage(
   useShinyjs(),  # Initialize shinyjs
   theme = shinytheme("cyborg"),
@@ -338,6 +448,8 @@ ui <- fluidPage(
       actionButton("pathway_up", "Enrich Pathways (Upregulated Genes)"),
       actionButton("pathway_down", "Enrich Pathways (Downregulated Genes)"),
       actionButton("plot_volcano", "Display Volcano Plot"),
+      actionButton("run_rf", "Run Random Forest Analysis"),  # Button for RF analysis
+      actionButton("calculate_power", "Calculate Statistical Power"),
       sliderInput("n_components_pca", "Number of PCA Components", min = 2, max = 10, value = 2),
       sliderInput("n_neighbors_umap", "Number of UMAP Neighbors", min = 5, max = 50, value = 15),
       sliderInput("p_value_threshold", "P-Value Threshold for Volcano Plot", min = 0, max = 0.1, value = 0.05, step = 0.001),
@@ -360,18 +472,24 @@ ui <- fluidPage(
                              tabPanel("Downregulated Genes", DTOutput("enrich_table_down"))
                            )
                   ),
+                  tabPanel("Random Forest Performance Metrics", 
+                           DTOutput("rf_metrics"),
+                           downloadButton("download_metrics", "Download Performance Metrics as CSV")  # New download button
+                  ),
+                  tabPanel("Power Calculation", verbatimTextOutput("power_results")),
                   tabPanel("Read Me", verbatimTextOutput("readme"))  # Add a new tab for README
       )
     )
   )
 )
 
-
-# Server
 server <- function(input, output, session) {
   options(shiny.maxRequestSize = 30 * 1024^2)
-  
+  # Reactive values to store enrichment results
+  enrich_res_up <- reactiveVal()
+  enrich_res_down <- reactiveVal()
   final_results <- reactiveVal()
+  rf_metrics <- reactiveVal()  # Store the RF metrics
   
   observeEvent(input$running_Dif, {
     shinyjs::info("Starting Differential Expression Analysis...")
@@ -434,50 +552,121 @@ server <- function(input, output, session) {
       write.csv(combined_res_all, file, row.names = FALSE)
     }
   )
+
   
   observeEvent(input$pathway_up, {
     req(final_results())
     shinyjs::info("Performing Pathway Enrichment (Upregulated Genes)...")
     res <- final_results()
-    enrich_res_up <- enrich_up_genes(res)
+    up_result <- enrich_up_genes(res)
+    enrich_res_up(up_result)
     output$enrich_table_up <- renderDT({
-      datatable(enrich_res_up)
+      if ("Message" %in% colnames(up_result)) {
+        datatable(data.frame(Message = "No upregulated genes found."), options = list(dom = 't'))
+      } else {
+        datatable(up_result)
+      }
     })  
     session$sendCustomMessage("notify", "Pathway Enrichment (Upregulated Genes) Completed!")
   })
-  
-  output$Up_genes <- downloadHandler(
-    filename = "Enrichment_on_upregulated_genes.csv",
-    content = function(file) {
-      write.csv(combined_res_up(), file, row.names = FALSE)
-    }
-  )
   
   observeEvent(input$pathway_down, {
     req(final_results())
     shinyjs::info("Performing Pathway Enrichment (Downregulated Genes)...")
     res <- final_results()
-    enrich_res_down <- enrich_down_genes(res)
+    down_result <- enrich_down_genes(res)
+    enrich_res_down(down_result)
     output$enrich_table_down <- renderDT({
-      datatable(enrich_res_down)
+      if ("Message" %in% colnames(down_result)) {
+        datatable(data.frame(Message = "No downregulated genes found."), options = list(dom = 't'))
+      } else {
+        datatable(down_result)
+      }
     }) 
     session$sendCustomMessage("notify", "Pathway Enrichment (Downregulated Genes) Completed!")
   })
   
-  output$Down_genes <- downloadHandler(
-    filename = "Enrichment_on_downregulated_genes.csv",
+  output$Up_genes <- downloadHandler(
+    filename = "Enrichment_on_upregulated_genes.csv",
     content = function(file) {
-      write.csv(combined_res_down(), file, row.names = FALSE)
+      up_data <- enrich_res_up()  # Get the reactive value
+      if (!is.null(up_data) && !("Message" %in% colnames(up_data))) {
+        write.csv(up_data, file, row.names = FALSE)
+      } else {
+        write.csv(data.frame(Message = "No upregulated genes found."), file, row.names = FALSE)
+      }
     }
   )
   
+  output$Down_genes <- downloadHandler(
+    filename = "Enrichment_on_downregulated_genes.csv",
+    content = function(file) {
+      down_data <- enrich_res_down()  # Get the reactive value
+      if (!is.null(down_data) && !("Message" %in% colnames(down_data))) {
+        write.csv(down_data, file, row.names = FALSE)
+      } else {
+        write.csv(data.frame(Message = "No downregulated genes found."), file, row.names = FALSE)
+      }
+    }
+  )
+  
+  # Random Forest Button Action
+  observeEvent(input$run_rf, {
+    req(final_results(), input$counts_input, input$phenotype_input)
+    shinyjs::info("Running Random Forest Analysis...")
+    selected_genes <- final_results()[,1]
+    # Get gene list from final results
+    metrics <- regularized_random_forest(counts_data = input$counts_input$datapath, 
+                                            phenotype_data = input$phenotype_input$datapath, 
+                                            selected_genes = selected_genes)
+    rf_metrics(metrics)  # Store the metrics
+    output$rf_metrics <- renderDT({
+      datatable(metrics)
+    })
+    session$sendCustomMessage("notify", "Random Forest Analysis Completed!")
+  })
+  
+  # Download handler for the performance metrics
+  output$download_metrics <- downloadHandler(
+    filename = "random_forest_performance_metrics.csv",
+    content = function(file) {
+      write.csv(rf_metrics(), file, row.names = FALSE)
+    }
+  )
+  observeEvent(input$calculate_power, {
+    # Ensure data is loaded
+    print("Power analysis button clicked.")
+    
+    shinyjs::info("Starting Statistical Power Calculation...")
+    
+    req(input$counts_input, input$phenotype_input)
+    
+    # Load pheno data
+    if (grepl("\\.csv$", input$phenotype_input$datapath)) {
+      pheno <- read.csv(input$phenotype_input$datapath, row.names = 1)
+    } else {
+      pheno <- read.table(input$phenotype_input$datapath, header = TRUE, row.names = 1)
+    }
+    
+    # Calculate power based on the number of samples in the expression data
+    power_result <- calculate_power(phenotype_data = pheno, effect_size = 0.5)
+    
+    # Display the power result
+    output$power_results <- renderPrint({
+      print(power_result)
+    })
+    
+    session$sendCustomMessage("notify", "Statistical Power Calculation Completed!")
+  })
+  
+  
+  
   # Render the README file content
   output$readme <- renderPrint({
-    readme_path <- normalizePath("RNA_SEQ APP_readme.txt", mustWork = TRUE)
+    readme_path <- normalizePath("JCAP RNA_SEQ Readme.txt", mustWork = TRUE)
     readLines(readme_path)  # Make sure to place your README.txt in the same directory as the app
   })
 }
-
 
 # Run the application
 shinyApp(ui = ui, server = server)
