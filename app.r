@@ -668,5 +668,16 @@ server <- function(input, output, session) {
   })
 }
 
+# ==== GLOBAL ERROR HANDLER FOR LOGGING ==== #
+log_file <- "error_log.txt"
+
+options(shiny.error = function() {
+  err <- geterrmessage()
+  timestamp <- Sys.time()
+  msg <- paste0("[", timestamp, "] ", err, "\n\n")
+  cat(msg, file = log_file, append = TRUE)
+})
+
+                             
 # Run the application
 shinyApp(ui = ui, server = server)
