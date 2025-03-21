@@ -79,8 +79,29 @@ Example (Linux cron):
 📊 Outputs & Tabs
 
 
+📊 Outputs & Tabs
+Tab	Description
+Differential Expression Results	Shows the top 50 differentially expressed genes using voom + limma. These genes are annotated with gene symbols and descriptions (biomaRt) and are used for downstream feature selection and modeling.
+PCA Plot	Interactive PCA plot based on the expression matrix; samples colored by phenotype
+UMAP Plot	Interactive UMAP using the expression data; number of neighbors is tunable
+Volcano Plot	Log2 Fold Change vs Adjusted P-value plot with threshold sliders and tooltips
+Pathway Enrichment	Enrichment results from Enrichr using:
+All top 20 genes selected via RF
+Upregulated genes
+Downregulated genes | | Random Forest Performance Metrics | A second Random Forest model is trained using only the top 20 genes (selected via importance ranking from the top 50 DEGs). This tab shows the performance of that classifier: accuracy, sensitivity, specificity, AUC, and prevalence. | | Power Calculation | Uses pwr to calculate statistical power based on group sizes and desired effect size | | Read Me | Live-rendered content from  JCAP RNA_SEQ Readme.txt, embedded directly into the app |
 
-
+#General processing  workflow
+Counts + Phenotype
+      ↓
+ Differential Expression (top 50 genes)
+      ↓
+  Feature Selection (RF importance → top 20)
+      ↓
+   New RF model trained on top 20 genes
+      ↓
+   Performance Evaluation (Metrics Tab)
+      ↓
+    Optional Pathway Enrichment 
 
 
 
