@@ -85,10 +85,6 @@ read_uploaded_file <- function(file_input) {
   if (!(ext %in% c("csv", "txt"))) {
     stop("Unsupported file format. Only .csv or .txt allowed.")
   }
-  file_size <- file.info(file_input$datapath)$size
-  if (file_size > 30 * 1024^2) {
-    stop("File too large. Must be less than 30MB.")
-  }
   data <- if (ext == "csv") {
     read.csv(file_input$datapath, row.names = 1, check.names = FALSE)
   } else {
