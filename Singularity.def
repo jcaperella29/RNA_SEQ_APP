@@ -1,0 +1,57 @@
+Bootstrap: docker
+From: rocker/r-ver:4.3.1
+
+%labels
+    Maintainer JCaperella
+    App RNA-SEQ Shiny App
+    Purpose Differential Expression + Enrichment + ML
+
+%environment
+    export PORT=8080
+    export SHINY_PORT=8080
+    export DEBIAN_FRONTEND=noninteractive
+    export MAKEFLAGS="-j4"
+
+%post
+    apt-get update && apt-get install -y \
+        build-essential \
+        libcurl4-openssl-dev \
+        libssl-dev \
+        libxml2-dev \
+        libgit2-dev \
+        libxt-dev \
+        libpng-dev \
+        libjpeg-dev \
+        libfreetype6-dev \
+        libbz2-dev \
+        liblzma-dev \
+        libz-dev \
+        libncurses-dev \
+        libicu-dev \
+        pandoc \
+        curl \
+        wget && apt-get clean
+
+    echo "📦 Installing CRAN packages..."
+    R -e "install.packages(c( \
+      'shiny', 'shinyjs', 'shinythemes', 'DT', 'plotly', 'pROC', 'pwr', \
+      'ggplot2', 'ggfortify', 'caret', 'randomForest', 'dplyr', 'tidyverse', \
+      'foreach', 'doParallel', 'umap', 'enrichR' \
+    ), repos='https://cloud.r-project.org')"
+
+    echo "🧬 Installing Bioconductor packages..."
+    R -e "if (!requireNamespace('BiocManager', quietly=TRUE)) install.packages('BiocManager', repos='https://cloud.r-project.org')"
+    R -e "BiocManager::install(version='3.18', ask=FALSE)"
+    R -e "BiocManager::install(c('limma', 'edgeR', 'biomaRt'), ask=FALSE, update=FALSE, dependencies=TRUE)"
+
+%files
+    app.R /app/app.R
+    www/ /app/www/
+    JCAP\ RNA_SEQ\ Readme.txt /app/JCAP\ RNA_SEQ\ Readme.txt
+
+%runscript
+    echo "🔥 Starting RNA_SEQ Shiny app on port $PORT"
+    Rscript -e "options(shiny.port=as.integer(Sys.getenv('PORT')), shiny.host='0.0.0.0'); shiny::runApp('/app')"
+
+%startscript
+    exec Rscript -e "options(shiny.port=as.integer(Sys.getenv('PORT')), shiny.host='0.0.0.0'); shiny::runApp('/app')"
