@@ -1,4 +1,3 @@
-
 # === RNA-SEQ APP: Differential Expression & Enrichment ===
 library(shiny)
 library(shinythemes)
@@ -18,6 +17,7 @@ library(foreach)
 library(umap)
 library(ggplot2)
 library(dplyr)
+library(pheatmap)
 
 # === Error Logging ===
 log_file <- "error_log.txt"
@@ -43,8 +43,10 @@ ui <- fluidPage(
       actionButton("plot_pca", "PCA Plot"),
       actionButton("plot_umap", "UMAP Plot"),
       actionButton("plot_volcano", "Volcano Plot"),
-      sliderInput("n_neighbors_umap", "UMAP Neighbors", min = 5, max = 50, value = 15),
-      downloadButton("output", "Download DE Results")
+      
+      actionButton("plot_heatmap", "Plot Heatmap"),
+      downloadButton("output", "Download DE Results"),
+      downloadButton("download_heatmap", "Download Heatmap")
     ),
     
     mainPanel(
@@ -53,6 +55,7 @@ ui <- fluidPage(
                   tabPanel("PCA Plot", plotlyOutput("pcaplot")),
                   tabPanel("UMAP Plot", plotlyOutput("umapplot")),
                   tabPanel("Volcano Plot", plotlyOutput("volcano_plot")),
+                  tabPanel("Heatmap", plotOutput("heatmap_plot")),
                   tabPanel("Read Me", verbatimTextOutput("readme"))
       )
     )
@@ -64,6 +67,7 @@ server <- function(input, output, session) {
   options(shiny.maxRequestSize = 30 * 1024^2)
   
   final_results <- reactiveVal()
+  heatmap_matrix <- reactiveVal()
   
   log_error <- function(e, context = "unknown") {
     msg <- paste0("[", Sys.time(), "] [", context, "] ", conditionMessage(e), "\n")
@@ -82,7 +86,7 @@ server <- function(input, output, session) {
     selectInput("phenotype_column", "Choose Phenotype Column", choices = colnames(pheno))
   })
   
-  # === Download Handler ===
+  # === Download DE Results ===
   output$output <- downloadHandler(
     filename = function() {
       paste0("DE_results_", Sys.Date(), ".csv")
@@ -278,6 +282,78 @@ server <- function(input, output, session) {
       showNotification("Error generating volcano plot.", type = "error")
     })
   })
+  
+  observeEvent(input$plot_heatmap, {
+    tryCatch({
+      req(input$counts_input, final_results())
+      
+      # Load counts
+      ext_counts <- tools::file_ext(input$counts_input$name)
+      counts <- if (ext_counts == "csv") {
+        read.csv(input$counts_input$datapath, row.names = 1, check.names = FALSE)
+      } else {
+        read.table(input$counts_input$datapath, header = TRUE, row.names = 1, check.names = FALSE)
+      }
+      
+      # Clean gene IDs
+      rownames(counts) <- sub("\\..*", "", rownames(counts))
+      final_df <- final_results()
+      final_df$Ensembl_IDs <- sub("\\..*", "", final_df$Ensembl_IDs)
+      
+      # Match genes
+      matching_genes <- intersect(rownames(counts), final_df$Ensembl_IDs)
+      if (length(matching_genes) < 2) {
+        showNotification("Not enough DE genes matched in count matrix.", type = "error")
+        return()
+      }
+      
+      counts <- counts[matching_genes, ]
+      
+      # Normalize
+      norm_counts <- t(scale(t(as.matrix(counts)), center = TRUE, scale = TRUE))
+      norm_counts[is.na(norm_counts)] <- 0
+      
+      # Add gene symbol labels
+      gene_labels <- final_df$hgnc_symbol[match(rownames(norm_counts), final_df$Ensembl_IDs)]
+      gene_labels[gene_labels == "" | is.na(gene_labels)] <- rownames(norm_counts)  # fallback
+      rownames(norm_counts) <- gene_labels
+      
+      heatmap_matrix(norm_counts)
+      
+      # Plot
+      output$heatmap_plot <- renderPlot({
+        pheatmap::pheatmap(norm_counts,
+                           show_rownames = TRUE,
+                           show_colnames = TRUE,
+                           clustering_distance_rows = "euclidean",
+                           clustering_distance_cols = "euclidean",
+                           clustering_method = "complete",
+                           main = "Heatmap - Final DE Genes (HGNC Labels)")
+      })
+    }, error = function(e) {
+      log_error(e, "Heatmap")
+      showNotification("Error generating heatmap.", type = "error")
+    })
+  })
+  
+  
+  output$download_heatmap <- downloadHandler(
+    filename = function() {
+      paste0("heatmap_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      req(heatmap_matrix())
+      png(file, width = 1200, height = 1000, res = 150)
+      pheatmap::pheatmap(heatmap_matrix(),
+                         show_rownames = FALSE,
+                         show_colnames = TRUE,
+                         clustering_distance_rows = "euclidean",
+                         clustering_distance_cols = "euclidean",
+                         clustering_method = "complete",
+                         main = paste("Heatmap -", input$heatmap_gene_choice))
+      dev.off()
+    }
+  )
   
   # === README Tab ===
   output$readme <- renderPrint({
