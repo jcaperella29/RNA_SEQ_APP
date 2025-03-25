@@ -28,6 +28,7 @@ options(shiny.error = function() {
   msg <- paste0("[", timestamp, "] ", err, "\n\n")
   cat(msg, file = log_file, append = TRUE)
 })
+
 ui <- fluidPage(
   useShinyjs(),
   theme = shinytheme("cyborg"),
@@ -44,7 +45,21 @@ ui <- fluidPage(
       actionButton("plot_volcano", "Volcano Plot"),
       actionButton("plot_heatmap", "Plot Heatmap"),
       downloadButton("output", "Download DE Results"),
-      downloadButton("download_heatmap", "Download Heatmap")
+      downloadButton("download_heatmap", "Download Heatmap"),  # ✅ This line was missing a comma before the next group
+      
+      hr(),
+      h4("Pathway Enrichment"),
+      
+      selectInput("enrich_db", "Select Pathway Database", choices = c(
+        "GO_Biological_Process_2021",
+        "KEGG_2021_Human",
+        "WikiPathway_2021_Human",
+        "Reactome_2022"
+      ), selected = "KEGG_2021_Human"),
+      
+      actionButton("enrich_all_btn", "Enrich All DE Genes"),
+      actionButton("enrich_up_btn", "Enrich Upregulated"),
+      actionButton("enrich_down_btn", "Enrich Downregulated")
     ),
     
     mainPanel(
@@ -54,11 +69,35 @@ ui <- fluidPage(
                   tabPanel("UMAP Plot", plotlyOutput("umapplot")),
                   tabPanel("Volcano Plot", plotlyOutput("volcano_plot")),
                   tabPanel("Heatmap", plotOutput("heatmap_plot", height = "800px")),
-                  tabPanel("Read Me", verbatimTextOutput("readme"))
+                  tabPanel("Read Me", verbatimTextOutput("readme")),
+                  
+                  tabPanel("Pathway Analysis",
+                           tabsetPanel(
+                             tabPanel("All DE Genes",
+                                      tabsetPanel(
+                                        tabPanel("Results", DTOutput("enrich_all_dt")),
+                                        tabPanel("Barplot", plotlyOutput("enrich_all_plot"))  # ✅ Changed to plotlyOutput
+                                      )
+                             ),
+                             tabPanel("Upregulated",
+                                      tabsetPanel(
+                                        tabPanel("Results", DTOutput("enrich_up_dt")),
+                                        tabPanel("Barplot", plotlyOutput("enrich_up_plot"))  # ✅ Changed to plotlyOutput
+                                      )
+                             ),
+                             tabPanel("Downregulated",
+                                      tabsetPanel(
+                                        tabPanel("Results", DTOutput("enrich_down_dt")),
+                                        tabPanel("Barplot", plotlyOutput("enrich_down_plot"))  # ✅ Changed to plotlyOutput
+                                      )
+                             )
+                           )
+                  )
       )
     )
   )
 )
+
 
 # === Server ===
 server <- function(input, output, session) {
@@ -400,6 +439,132 @@ server <- function(input, output, session) {
         dev.off()
       }
     )
+    # === ENRICHMENT UTILS ===
+    perform_enrichment <- function(gene_list, db) {
+      if (length(gene_list) < 2) return(NULL)
+      enrichr(gene_list, databases = db)[[1]]
+    }
+    
+    plot_enrichment_bar <- function(df, title) {
+      top <- head(df[order(df$Adjusted.P.value), ], 10)
+      top$Term <- factor(top$Term, levels = rev(top$Term))
+      ggplot(top, aes(x = Term, y = -log10(Adjusted.P.value))) +
+        geom_bar(stat = "identity", fill = "#2c7bb6") +
+        coord_flip() +
+        theme_minimal() +
+        labs(title = title, y = "-log10 Adjusted P-value", x = "Pathway")
+    }
+    
+    # === ENRICHMENT UTILS ===
+    perform_enrichment <- function(gene_list, db) {
+      if (length(gene_list) < 2) return(NULL)
+      enrichr(gene_list, databases = db)[[1]]
+    }
+    
+   
+    
+    plot_enrichment_bar <- function(df, title) {
+      top <- head(df[order(df$Adjusted.P.value), ], 10)
+      top$Term <- factor(top$Term, levels = rev(top$Term))
+      
+      plotly::plot_ly(
+        data = top,
+        x = ~-log10(Adjusted.P.value),
+        y = ~Term,
+        type = "bar",
+        orientation = "h",
+        hoverinfo = "text",
+        text = ~paste0("P.adj: ", signif(Adjusted.P.value, 3),
+                       "<br>Score: ", round(Combined.Score, 2))
+      ) %>%
+        layout(
+          title = list(text = title),
+          xaxis = list(title = "-log10 Adjusted P-value"),
+          yaxis = list(title = ""),
+          margin = list(l = 200)
+        )
+    }
+    
+    
+    observeEvent(input$enrich_all_btn, {
+      req(final_results())
+      showNotification("Enriching all DE genes",type = "message")
+      db <- input$enrich_db
+      genes <- na.omit(final_results()$hgnc_symbol)
+      res <- perform_enrichment(genes, db)
+      enrich_all_res(res)
+      showNotification("All DE Genes Enriched ✅", type = "message")
+    })
+    
+    observeEvent(input$enrich_up_btn, {
+      req(final_results())
+      showNotification("Enriching upregulated DE genes",type = "message")
+      
+      db <- input$enrich_db
+      df <- final_results()
+      genes <- df$hgnc_symbol[df$logFC > 1 & df$adj.P.Val < 0.05]
+      res <- perform_enrichment(genes, db)
+      enrich_up_res(res)
+      showNotification("Upregulated Genes Enriched ✅", type = "message")
+    })
+    
+    enrich_all_res <- reactiveVal()
+    enrich_up_res <- reactiveVal()
+    enrich_down_res <- reactiveVal()
+    
+    
+    observeEvent(input$enrich_down_btn, {
+      req(final_results())
+      
+      showNotification("Enriching downregulated DE genes",type = "message")
+      
+      db <- input$enrich_db
+      df <- final_results()
+      genes <- df$hgnc_symbol[df$logFC < -1 & df$adj.P.Val < 0.05]
+      res <- perform_enrichment(genes, db)
+      enrich_down_res(res)
+      showNotification("Downregulated Genes Enriched ✅", type = "message")
+    })
+    
+    
+    
+    
+    # === DT Tables ===
+    output$enrich_all_dt <- renderDT({
+      req(enrich_all_res())
+      datatable(enrich_all_res()[, c("Term", "Adjusted.P.value", "Combined.Score")])
+    })
+    
+    output$enrich_up_dt <- renderDT({
+      req(enrich_up_res())
+      datatable(enrich_up_res()[, c("Term", "Adjusted.P.value", "Combined.Score")])
+    })
+    
+    output$enrich_down_dt <- renderDT({
+      req(enrich_down_res())
+      datatable(enrich_down_res()[, c("Term", "Adjusted.P.value", "Combined.Score")])
+    })
+    
+    output$enrich_all_plot <- renderPlotly({
+      req(enrich_all_res())
+      showNotification("Enrichment plot (All) ready ✅", type = "default")
+      plot_enrichment_bar(enrich_all_res(), "All DE Genes")
+    })
+    
+    output$enrich_up_plot <- renderPlotly({
+      req(enrich_up_res())
+      showNotification("Enrichment plot (Upregulated) ready ✅", type = "default")
+      plot_enrichment_bar(enrich_up_res(), "Upregulated Genes")
+    })
+    
+    output$enrich_down_plot <- renderPlotly({
+      req(enrich_down_res())
+      showNotification("Enrichment plot (Downregulated) ready ✅", type = "default")
+      plot_enrichment_bar(enrich_down_res(), "Downregulated Genes")
+    })
+    
+    
+    
 } # <- closes server function
 
 # === Launch App ===
