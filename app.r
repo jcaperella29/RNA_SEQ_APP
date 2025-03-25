@@ -75,20 +75,30 @@ ui <- fluidPage(
                            tabsetPanel(
                              tabPanel("All DE Genes",
                                       tabsetPanel(
-                                        tabPanel("Results", DTOutput("enrich_all_dt")),
-                                        tabPanel("Barplot", plotlyOutput("enrich_all_plot"))  # ✅ Changed to plotlyOutput
+                                        tabPanel("Results",
+                                                 downloadButton("download_enrich_all", "Download All DE Enrichment"),
+                                                 DTOutput("enrich_all_dt")
+                                        ),
+                                        tabPanel("Barplot", plotlyOutput("enrich_all_plot"))
                                       )
                              ),
                              tabPanel("Upregulated",
                                       tabsetPanel(
-                                        tabPanel("Results", DTOutput("enrich_up_dt")),
-                                        tabPanel("Barplot", plotlyOutput("enrich_up_plot"))  # ✅ Changed to plotlyOutput
+                                        tabPanel("Results",
+                                                 downloadButton("download_enrich_up", "Download Upregulated Enrichment"),
+                                                 DTOutput("enrich_up_dt")
+                                        ),
+                                        tabPanel("Barplot", plotlyOutput("enrich_up_plot"))
                                       )
                              ),
                              tabPanel("Downregulated",
                                       tabsetPanel(
-                                        tabPanel("Results", DTOutput("enrich_down_dt")),
-                                        tabPanel("Barplot", plotlyOutput("enrich_down_plot"))  # ✅ Changed to plotlyOutput
+                                        tabPanel("Results",
+                                                 downloadButton("download_enrich_down", "Download Downregulated Enrichment"),
+                                                 DTOutput("enrich_down_dt")
+                                        ),
+                                        tabPanel("Barplot", plotlyOutput("enrich_down_plot"))
+                                    
                                       )
                              )
                            )
@@ -98,6 +108,11 @@ ui <- fluidPage(
   )
 )
 
+
+               
+      
+      
+      
 
 # === Server ===
 server <- function(input, output, session) {
@@ -563,7 +578,33 @@ server <- function(input, output, session) {
       plot_enrichment_bar(enrich_down_res(), "Downregulated Genes")
     })
     
+
+    # === Download Handlers for Enrichment Results ===
+    output$download_enrich_all <- downloadHandler(
+      filename = function() paste0("enrichment_all_", Sys.Date(), ".csv"),
+      content = function(file) {
+        req(enrich_all_res())
+        write.csv(enrich_all_res(), file, row.names = FALSE)
+      }
+    )
     
+    output$download_enrich_up <- downloadHandler(
+      filename = function() paste0("enrichment_upregulated_", Sys.Date(), ".csv"),
+      content = function(file) {
+        req(enrich_up_res())
+        write.csv(enrich_up_res(), file, row.names = FALSE)
+      }
+    )
+    
+    output$download_enrich_down <- downloadHandler(
+      filename = function() paste0("enrichment_downregulated_", Sys.Date(), ".csv"),
+      content = function(file) {
+        req(enrich_down_res())
+        write.csv(enrich_down_res(), file, row.names = FALSE)
+      }
+    )
+    
+        
     
 } # <- closes server function
 
