@@ -364,8 +364,12 @@ server <- function(input, output, session) {
           )
           grid::grid.newpage()
           grid::grid.draw(p$gtable)
+          
+          # 🎉 NEW: Notify once rendered
+          showNotification("Heatmap successfully generated ✅", type = "message")
         }
       })
+      
       
     }, error = function(e) {
       log_error(e, "Heatmap")
@@ -400,5 +404,3 @@ server <- function(input, output, session) {
 
 # === Launch App ===
 shinyApp(server = server, ui = ui)
-
-      
