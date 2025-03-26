@@ -63,7 +63,10 @@ ui <- fluidPage(
       
       hr(),
       h4("Power Analysis"),
-      actionButton("run_power", "Run Power Analysis")
+      actionButton("run_power", "Run Power Analysis"),
+      sliderInput("effect_size", "Effect Size (Cohen's d / f)", min = 0.1, max = 1.5, value = 0.8, step = 0.1),
+      downloadButton("download_power", "Download Power Summary")
+      
     ),
     
     mainPanel(
@@ -109,6 +112,7 @@ ui <- fluidPage(
                   
                   tabPanel("Power Analysis",
                            tableOutput("power_summary")
+                           
                   )
       )
     )
@@ -126,6 +130,8 @@ ui <- fluidPage(
 # === Server ===
 server <- function(input, output, session) {
   options(shiny.maxRequestSize = 30 * 1024^2)
+  power_result_table <- reactiveVal()
+  
   
   final_results <- reactiveVal()
   heatmap_matrix <- reactiveVal()
@@ -612,7 +618,7 @@ server <- function(input, output, session) {
         write.csv(enrich_down_res(), file, row.names = FALSE)
       }
     )
-    
+##power analysis
     observeEvent(input$run_power, {
       req(input$phenotype_input, input$phenotype_column)
       
@@ -630,75 +636,69 @@ server <- function(input, output, session) {
         groups <- as.factor(pheno[[group_col]])
         group_sizes <- table(groups)
         k <- length(group_sizes)
+        effect_size <- input$effect_size
+        sig <- 0.05
         
-        output_text <- paste0("Detected ", k, " groups:\n\n")
-        output_text <- paste0(output_text, capture.output(print(group_sizes)), collapse = "\n")
+        result <- NULL
         
         if (k == 2) {
-          n1 <- group_sizes[1]
-          n2 <- group_sizes[2]
-          d <- 0.8  # Medium effect size
-          power_res <- pwr::pwr.t2n.test(n1 = n1, n2 = n2, d = d, sig.level = 0.05)
-          
-          output_text <- paste0(output_text, "\n\nPower Analysis (Two-sample t-test, d=0.8):\n\n")
-          output_text <- paste0(output_text, capture.output(print(power_res)), collapse = "\n")
-          
-        } else if (k > 2) {
-          f <- 0.25  # Medium effect size for ANOVA
-          total_n <- sum(group_sizes)
-          power_res <- pwr::pwr.anova.test(k = k, n = total_n / k, f = f, sig.level = 0.05)
-          
-          output_text <- paste0(output_text, "\n\nPower Analysis (ANOVA, f=0.25):\n\n")
-          output_text <- paste0(output_text, capture.output(print(power_res)), collapse = "\n")
-          
-        } else {
-          output_text <- paste0(output_text, "\n\n⚠️ Not enough groups for power analysis.")
-        }
-        
-        output$power_summary <- renderTable({
-          req(input$phenotype_input, input$phenotype_column)
-          
-          ext <- tools::file_ext(input$phenotype_input$name)
-          pheno <- if (ext == "csv") {
-            read.csv(input$phenotype_input$datapath, row.names = 1, check.names = FALSE)
-          } else {
-            read.table(input$phenotype_input$datapath, header = TRUE, row.names = 1, check.names = FALSE)
-          }
-          
-          group_col <- input$phenotype_column
-          groups <- as.factor(pheno[[group_col]])
-          group_sizes <- table(groups)
-          k <- length(group_sizes)
-          
-          if (k != 2) {
-            return(data.frame(Message = "Power summary table only available for 2 groups"))
-          }
-          
           n1 <- as.numeric(group_sizes[1])
           n2 <- as.numeric(group_sizes[2])
-          group_names <- paste(names(group_sizes), collapse = ", ")
-          d <- 0.8
-          sig <- 0.05
-          power_res <- pwr::pwr.t2n.test(n1 = n1, n2 = n2, d = d, sig.level = sig)
+          power_res <- pwr::pwr.t2n.test(n1 = n1, n2 = n2, d = effect_size, sig.level = sig)
           
-          data.frame(
-            `Effect Size` = d,
-            `Groups` = group_names,
+          result <- data.frame(
+            `Test` = "t-test",
+            `Effect Size (d)` = effect_size,
+            `Groups` = paste(names(group_sizes), collapse = ", "),
             `n1` = n1,
             `n2` = n2,
             `Significance Level` = sig,
-            `Power` = round(power_res$power, 3),
+            `Estimated Power` = round(power_res$power, 3),
             check.names = FALSE
           )
-        })
+          
+        } else if (k > 2) {
+          total_n <- sum(group_sizes)
+          power_res <- pwr::pwr.anova.test(k = k, n = total_n / k, f = effect_size, sig.level = sig)
+          
+          result <- data.frame(
+            `Test` = "ANOVA",
+            `Effect Size (f)` = effect_size,
+            `Groups` = paste(names(group_sizes), collapse = ", "),
+            `Samples per Group` = round(total_n / k),
+            `Significance Level` = sig,
+            `Estimated Power` = round(power_res$power, 3),
+            check.names = FALSE
+          )
+        } else {
+          result <- data.frame(Message = "⚠️ Not enough groups for power analysis")
+        }
         
-        showNotification("Power analysis complete ✅", type = "default")
+        power_result_table(result)  # save it for rendering and download
+        showNotification("Power analysis complete ✅", type = "message")
         
       }, error = function(e) {
+        power_result_table(data.frame(Error = e$message))
         showNotification("Power analysis failed ❌", type = "error")
-        output$power_summary <- renderText({ paste("Error:", e$message) })
       })
     })
+    output$power_summary <- renderTable({
+      req(power_result_table())
+      power_result_table()
+    })
+    output$download_power <- downloadHandler(
+      filename = function() {
+        paste0("power_summary_", Sys.Date(), ".csv")
+      },
+      content = function(file) {
+        df <- power_result_table()
+        if (is.null(df)) {
+          writeLines("No power analysis result available.", file)
+        } else {
+          write.csv(df, file, row.names = FALSE)
+        }
+      }
+    )
     
     
 } # <- closes server function
