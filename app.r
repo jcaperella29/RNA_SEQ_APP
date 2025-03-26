@@ -1,4 +1,6 @@
 
+    
+
 # === RNA-SEQ APP: Differential Expression & Enrichment ===
 library(shiny)
 library(shinythemes)
@@ -32,6 +34,9 @@ options(shiny.error = function() {
 
 
     
+
+      
+      
 ui <- fluidPage(
   useShinyjs(),
   theme = shinytheme("cyborg"),
@@ -70,7 +75,11 @@ ui <- fluidPage(
       selectInput("power_test_type", "Power Curve Type",
                   choices = c("t-test (2 groups)" = "ttest", "ANOVA (>2 groups)" = "anova")),
       sliderInput("curve_n_range", "Sample Size Range", min = 2, max = 100, value = c(2, 30)),
-      actionButton("plot_power_curve", "Plot Power Curve")
+      actionButton("plot_power_curve", "Plot Power Curve"),
+      
+      hr(),
+      h4("Classification"),
+      actionButton("run_rf_classifier", "Run Random Forest Classifier")
     ),
     
     mainPanel(
@@ -111,23 +120,20 @@ ui <- fluidPage(
                            )
                   ),
                   
-                  tabPanel("Power Analysis Table",
-                           tableOutput("power_summary")
-                  ),
-                  tabPanel("Power Curve",
-                           plotlyOutput("power_curve_plot")
-                  )
+                  tabPanel("Power Analysis Table", tableOutput("power_summary")),
+                  tabPanel("Power Curve", plotlyOutput("power_curve_plot")),
                   
-      ) # closes tabsetPanel
-    ) # closes mainPanel
-  ) # closes sidebarLayout
-) # closes fluidPage
-
-
-               
-      
-      
-      
+                  tabPanel("Classification",
+                           tabsetPanel(
+                             tabPanel("Predictions", DTOutput("rf_predictions_dt")),
+                             tabPanel("Metrics", tableOutput("rf_metrics_table")),
+                             tabPanel("ROC Curve", plotlyOutput("rf_roc_plot"))
+                           )
+                  )
+      )
+    )
+  )
+)
 
 # === Server ===
 server <- function(input, output, session) {
@@ -738,13 +744,111 @@ server <- function(input, output, session) {
                  )) 
       })
     })
-    
-    
-} # <- closes server function
-
-# === Launch App ===
-shinyApp(server = server, ui = ui)
-
-               
-      
+    observeEvent(input$run_rf_classifier, {
+      tryCatch({
+        req(final_results(), input$counts_input, input$phenotype_input, input$phenotype_column)
+        showNotification("Running Random Forest classifier...", type = "message")
+        
+        # Load counts
+        ext_counts <- tools::file_ext(input$counts_input$name)
+        counts <- if (ext_counts == "csv") {
+          read.csv(input$counts_input$datapath, row.names = 1, check.names = FALSE)
+        } else {
+          read.table(input$counts_input$datapath, header = TRUE, row.names = 1, check.names = FALSE)
+        }
+        
+        # Load phenotype
+        ext_pheno <- tools::file_ext(input$phenotype_input$name)
+        pheno <- if (ext_pheno == "csv") {
+          read.csv(input$phenotype_input$datapath, row.names = 1, check.names = FALSE)
+        } else {
+          read.table(input$phenotype_input$datapath, header = TRUE, row.names = 1, check.names = FALSE)
+        }
+        
+        pheno_vec <- as.factor(pheno[[input$phenotype_column]])
+        
+        # Filter DE genes
+        de_genes <- final_results()$Ensembl_IDs
+        counts <- counts[rownames(counts) %in% de_genes, ]
+        counts <- t(counts)
+        counts <- as.data.frame(counts)
+        counts$Phenotype <- pheno_vec
+        
+        # Train/Test Split (70/30)
+        set.seed(42)
+        train_idx <- caret::createDataPartition(counts$Phenotype, p = 0.7, list = FALSE)
+        train_data <- counts[train_idx, ]
+        test_data <- counts[-train_idx, ]
+        
+        # Train RF model
+        rf_model <- randomForest(Phenotype ~ ., data = train_data, ntree = 500, importance = TRUE)
+        probs <- predict(rf_model, newdata = test_data, type = "prob")
+        preds <- predict(rf_model, newdata = test_data)
+        
+        # Predictions table
+        pred_table <- data.frame(
+          Sample = rownames(test_data),
+          Actual = test_data$Phenotype,
+          Predicted = preds,
+          Prob = apply(probs, 1, max),
+          check.names = FALSE
+        )
+        
+        # Metrics
+        cm <- caret::confusionMatrix(preds, test_data$Phenotype)
+        sens <- cm$byClass['Sensitivity']
+        spec <- cm$byClass['Specificity']
+        
+        # ROC
+        pheno_levels <- levels(test_data$Phenotype)
+        if (length(pheno_levels) != 2) {
+          roc_plot <- plotly::plot_ly() %>%
+            layout(title = "ROC only supported for 2-class problems ❌")
+          auc_val <- NA
+        } else {
+          roc_obj <- pROC::roc(test_data$Phenotype, probs[, pheno_levels[2]])
+          auc_val <- round(roc_obj$auc, 3)
+          roc_df <- data.frame(
+            FPR = 1 - roc_obj$specificities,
+            TPR = roc_obj$sensitivities
+          )
+          
+          roc_plot <- plot_ly(
+            data = roc_df,
+            x = ~FPR,
+            y = ~TPR,
+            type = 'scatter',
+            mode = 'lines',
+            line = list(color = '#1f77b4', width = 2)
+          ) %>%
+            layout(
+              title = paste("ROC Curve (AUC =", auc_val, ")"),
+              xaxis = list(title = "False Positive Rate"),
+              yaxis = list(title = "True Positive Rate"),
+              showlegend = FALSE
+            )
+        }
+        
+        # Outputs
+        output$rf_predictions_dt <- renderDT({
+          datatable(pred_table)
+        })
+        
+        output$rf_metrics_table <- renderTable({
+          data.frame(
+            Sensitivity = round(sens, 3),
+            Specificity = round(spec, 3),
+            `AUC (ROC)` = ifelse(is.na(auc_val), "N/A", auc_val)
+          )
+        }, rownames = FALSE)
+        
+        output$rf_roc_plot <- renderPlotly({
+          roc_plot
+        })
+        
+        showNotification("Random Forest classification (w/ split) done ✅", type = "message")
+      }, error = function(e) {
+        showNotification(paste("RF Classification Error:", e$message), type = "error")
+      })
+    })
     
