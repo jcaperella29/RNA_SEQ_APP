@@ -28,7 +28,10 @@ options(shiny.error = function() {
   msg <- paste0("[", timestamp, "] ", err, "\n\n")
   cat(msg, file = log_file, append = TRUE)
 })
+#ui
 
+
+    
 ui <- fluidPage(
   useShinyjs(),
   theme = shinytheme("cyborg"),
@@ -49,14 +52,12 @@ ui <- fluidPage(
       
       hr(),
       h4("Pathway Enrichment"),
-      
       selectInput("enrich_db", "Select Pathway Database", choices = c(
         "GO_Biological_Process_2021",
         "KEGG_2021_Human",
         "WikiPathway_2021_Human",
         "Reactome_2022"
       ), selected = "KEGG_2021_Human"),
-      
       actionButton("enrich_all_btn", "Enrich All DE Genes"),
       actionButton("enrich_up_btn", "Enrich Upregulated"),
       actionButton("enrich_down_btn", "Enrich Downregulated"),
@@ -65,8 +66,11 @@ ui <- fluidPage(
       h4("Power Analysis"),
       actionButton("run_power", "Run Power Analysis"),
       sliderInput("effect_size", "Effect Size (Cohen's d / f)", min = 0.1, max = 1.5, value = 0.8, step = 0.1),
-      downloadButton("download_power", "Download Power Summary")
-      
+      downloadButton("download_power", "Download Power Summary"),
+      selectInput("power_test_type", "Power Curve Type",
+                  choices = c("t-test (2 groups)" = "ttest", "ANOVA (>2 groups)" = "anova")),
+      sliderInput("curve_n_range", "Sample Size Range", min = 2, max = 100, value = c(2, 30)),
+      actionButton("plot_power_curve", "Plot Power Curve")
     ),
     
     mainPanel(
@@ -84,8 +88,7 @@ ui <- fluidPage(
                                       tabsetPanel(
                                         tabPanel("Results",
                                                  downloadButton("download_enrich_all", "Download All DE Enrichment"),
-                                                 DTOutput("enrich_all_dt")
-                                        ),
+                                                 DTOutput("enrich_all_dt")),
                                         tabPanel("Barplot", plotlyOutput("enrich_all_plot"))
                                       )
                              ),
@@ -93,8 +96,7 @@ ui <- fluidPage(
                                       tabsetPanel(
                                         tabPanel("Results",
                                                  downloadButton("download_enrich_up", "Download Upregulated Enrichment"),
-                                                 DTOutput("enrich_up_dt")
-                                        ),
+                                                 DTOutput("enrich_up_dt")),
                                         tabPanel("Barplot", plotlyOutput("enrich_up_plot"))
                                       )
                              ),
@@ -102,24 +104,24 @@ ui <- fluidPage(
                                       tabsetPanel(
                                         tabPanel("Results",
                                                  downloadButton("download_enrich_down", "Download Downregulated Enrichment"),
-                                                 DTOutput("enrich_down_dt")
-                                        ),
+                                                 DTOutput("enrich_down_dt")),
                                         tabPanel("Barplot", plotlyOutput("enrich_down_plot"))
                                       )
                              )
                            )
                   ),
                   
-                  tabPanel("Power Analysis",
+                  tabPanel("Power Analysis Table",
                            tableOutput("power_summary")
-                           
+                  ),
+                  tabPanel("Power Curve",
+                           plotlyOutput("power_curve_plot")
                   )
-      )
-    )
-  ) # <- closes sidebarLayout
-)   # <- ✅ closes fluidPage
-
-    
+                  
+      ) # closes tabsetPanel
+    ) # closes mainPanel
+  ) # closes sidebarLayout
+) # closes fluidPage
 
 
                
@@ -700,8 +702,49 @@ server <- function(input, output, session) {
       }
     )
     
+    output$power_curve_plot <- renderPlotly({
+      req(input$plot_power_curve)  # makes it reactive to button
+      showNotification("generating power curve",type ="message")
+      isolate({
+        effect_size <- input$effect_size
+        test_type <- input$power_test_type
+        n_seq <- seq(input$curve_n_range[1], input$curve_n_range[2])
+        sig <- 0.05
+        
+        power_vals <- sapply(n_seq, function(n) {
+          if (test_type == "ttest") {
+            # Equal n per group assumed
+            pwr::pwr.t.test(n = n, d = effect_size, sig.level = sig, type = "two.sample")$power
+          } else {
+            # ANOVA assumes n per group = n
+            pwr::pwr.anova.test(k = 3, n = n, f = effect_size, sig.level = sig)$power
+          }
+        })
+        
+        df <- data.frame(SampleSize = n_seq, Power = power_vals)
+        showNotification("Power curve ready ✅", type = "message")  # 💬 Notification after plot
+        
+        
+        plot_ly(df, x = ~SampleSize, y = ~Power, type = 'scatter', mode = 'lines+markers',
+                line = list(color = "#00cc99", width = 3)) %>%
+          layout(title = "Power Curve",
+                 xaxis = list(title = "Sample Size (per group)"),
+                 yaxis = list(title = "Power", range = c(0, 1)),
+                 shapes = list(
+                   list(type = "line", x0 = min(n_seq), x1 = max(n_seq),
+                        y0 = 0.8, y1 = 0.8,
+                        line = list(dash = 'dash', color = "red"))
+                  
+                 )) 
+      })
+    })
+    
     
 } # <- closes server function
 
 # === Launch App ===
 shinyApp(server = server, ui = ui)
+
+               
+      
+    
