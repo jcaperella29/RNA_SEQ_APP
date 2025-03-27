@@ -32,6 +32,35 @@ An interactive **R Shiny** web app for RNA-seq analysis — integrating differen
 - 📄 Embedded readme tab inside the app
 
 ---
+---
+
+## 🖼️ Screenshots
+
+### Differential Expression Results
+Shows the top DEGs with Ensembl ID, gene symbol, description, p-value, logFC, and RF score.
+
+![DE Results](screenshots/de_results.png)
+
+---
+
+### Heatmap (Z-scored)
+Clustered heatmap of top DEGs across all samples.
+
+![Heatmap](screenshots/heatmap.png)
+
+---
+
+### Pathway Enrichment Table
+Enriched terms for selected genes (EnrichR).
+
+![Enrichment Table](screenshots/enrichment_table.png)
+
+---
+
+### Enrichment Barplot (Interactive)
+Top terms visualized with -log10 adjusted P-values.
+
+![Enrichment Plot](screenshots/enrichment_plot.png)
 
 ## 📁 Folder Structure
 
