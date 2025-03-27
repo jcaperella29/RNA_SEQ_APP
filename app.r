@@ -85,7 +85,7 @@ ui <- fluidPage(
                   tabPanel("Volcano Plot", plotlyOutput("volcano_plot")),
                   tabPanel("Heatmap", plotlyOutput("heatmap_plot", height = "800px")),
                   
-                  tabPanel("Read Me", verbatimTextOutput("readme")),
+                  tabPanel("Read Me", verbatimTextOutput("JCAP RNA_SEQ Readme.txt")),
                   
                   tabPanel("Pathway Analysis",
                            tabsetPanel(
