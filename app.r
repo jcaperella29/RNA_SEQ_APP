@@ -1,6 +1,4 @@
 
-    
-
 # === RNA-SEQ APP: Differential Expression & Enrichment ===
 library(shiny)
 library(shinythemes)
@@ -32,14 +30,11 @@ options(shiny.error = function() {
 })
 #ui
 
-
-    
-
-      
-      
 ui <- fluidPage(
   useShinyjs(),
-  theme = shinytheme("cyborg"),
+  tags$head(
+    tags$link(rel = "stylesheet", type = "text/css", href ="Arcane _Alchemy _Theme.css" )
+  ),
   titlePanel("JCAP RNA-SEQ Analyzer"),
   
   sidebarLayout(
@@ -53,7 +48,7 @@ ui <- fluidPage(
       actionButton("plot_volcano", "Volcano Plot"),
       actionButton("plot_heatmap", "Plot Heatmap"),
       downloadButton("output", "Download DE Results"),
-      downloadButton("download_heatmap", "Download Heatmap"),
+      
       
       hr(),
       h4("Pathway Enrichment"),
@@ -88,7 +83,8 @@ ui <- fluidPage(
                   tabPanel("PCA Plot", plotlyOutput("pcaplot")),
                   tabPanel("UMAP Plot", plotlyOutput("umapplot")),
                   tabPanel("Volcano Plot", plotlyOutput("volcano_plot")),
-                  tabPanel("Heatmap", plotOutput("heatmap_plot", height = "800px")),
+                  tabPanel("Heatmap", plotlyOutput("heatmap_plot", height = "800px")),
+                  
                   tabPanel("Read Me", verbatimTextOutput("readme")),
                   
                   tabPanel("Pathway Analysis",
@@ -125,15 +121,24 @@ ui <- fluidPage(
                   
                   tabPanel("Classification",
                            tabsetPanel(
-                             tabPanel("Predictions", DTOutput("rf_predictions_dt")),
-                             tabPanel("Metrics", tableOutput("rf_metrics_table")),
+                             tabPanel("Predictions",
+                                      downloadButton("download_rf_predictions", "Download Predictions"),
+                                      DTOutput("rf_predictions_dt")),
+                             tabPanel("Metrics",
+                                      downloadButton("download_rf_metrics", "Download Metrics"),
+                                      tableOutput("rf_metrics_table")),
                              tabPanel("ROC Curve", plotlyOutput("rf_roc_plot"))
                            )
                   )
-      )
-    )
-  )
-)
+      ) # closes tabsetPanel
+    ) # closes mainPanel
+  ) # closes sidebarLayout
+) # closes fluidPage
+
+    
+
+      
+
 
 # === Server ===
 server <- function(input, output, session) {
@@ -143,6 +148,11 @@ server <- function(input, output, session) {
   
   final_results <- reactiveVal()
   heatmap_matrix <- reactiveVal()
+  
+  
+  rf_predictions_data <- reactiveVal()
+  rf_metrics_data <- reactiveVal()
+  
   
   log_error <- function(e, context = "unknown") {
     msg <- paste0("[", Sys.time(), "] [", context, "] ", conditionMessage(e), "\n")
@@ -372,13 +382,12 @@ server <- function(input, output, session) {
       showNotification("Error generating volcano plot.", type = "error")
     })
   })
- #heatmap
-  
-  observeEvent(input$plot_heatmap, {
+
+  # === 🔥 HEATMAP ENGINE: Plotly + Clustering ===
+  heatmap_matrix <- eventReactive(input$plot_heatmap, {
     tryCatch({
       req(input$counts_input, final_results())
-      showNotification("Generating Heatmap...", type = "message")
-      
+      showNotification("Generating Heatmap",type = "message")
       # Load counts
       ext_counts <- tools::file_ext(input$counts_input$name)
       counts <- if (ext_counts == "csv") {
@@ -387,96 +396,67 @@ server <- function(input, output, session) {
         read.table(input$counts_input$datapath, header = TRUE, row.names = 1, check.names = FALSE)
       }
       
-      # Clean gene IDs
+      # Clean Ensembl IDs
       rownames(counts) <- sub("\\..*", "", rownames(counts))
       final_df <- final_results()
       final_df$Ensembl_IDs <- sub("\\..*", "", final_df$Ensembl_IDs)
       
       # Match genes
-      matching_genes <- intersect(rownames(counts), final_df$Ensembl_IDs)
-      if (length(matching_genes) < 2) {
-        showNotification("Not enough DE genes matched in count matrix.", type = "error")
-        return()
+      matched_genes <- intersect(rownames(counts), final_df$Ensembl_IDs)
+      if (length(matched_genes) < 2) {
+        showNotification("❌ Not enough DE genes matched in count matrix.", type = "error")
+        return(NULL)
       }
       
-      counts <- counts[matching_genes, ]
+      counts <- counts[matched_genes, ]
       
-      # Normalize
-      norm_counts <- t(scale(t(as.matrix(counts)), center = TRUE, scale = TRUE))
-      norm_counts[is.na(norm_counts)] <- 0
+      # Normalize: Z-score per gene
+      mat <- t(scale(t(as.matrix(counts)), center = TRUE, scale = TRUE))
+      mat[is.na(mat)] <- 0
+      rownames(mat) <- matched_genes
       
-      # Match gene labels
-      matched <- match(rownames(norm_counts), final_df$Ensembl_IDs)
-      gene_labels <- final_df$hgnc_symbol[matched]
+      # Clustering rows (genes) and columns (samples)
+      row_order <- hclust(dist(mat))$order
+      col_order <- hclust(dist(t(mat)))$order
+      mat <- mat[row_order, col_order, drop = FALSE]
       
-      # Fallbacks
-      fallbacks <- is.na(gene_labels) | gene_labels == ""
-      gene_labels[fallbacks] <- rownames(norm_counts)[fallbacks]
-      
-      # Assign rownames safely
-      if (length(gene_labels) == nrow(norm_counts)) {
-        rownames(norm_counts) <- gene_labels
-      } else {
-        warning("Gene label count mismatch — fallback to Ensembl IDs")
-        rownames(norm_counts) <- rownames(norm_counts)
-      }
-      
-      heatmap_matrix(norm_counts)
-      
-      output$heatmap_plot <- renderPlot({
-        mat <- heatmap_matrix()
-        if (is.null(mat) || nrow(mat) < 2 || ncol(mat) < 2) {
-          plot.new()
-          text(0.5, 0.5, "Insufficient data for heatmap", cex = 1.5)
-        } else {
-          p <- pheatmap::pheatmap(
-            mat,
-            show_rownames = TRUE,
-            show_colnames = TRUE,
-            clustering_distance_rows = "euclidean",
-            clustering_distance_cols = "euclidean",
-            clustering_method = "complete",
-            main = "Heatmap - Final DE Genes (HGNC Labels)",
-            silent = TRUE
-          )
-          grid::grid.newpage()
-          grid::grid.draw(p$gtable)
-          
-          # 🎉 NEW: Notify once rendered
-          showNotification("Heatmap successfully generated ✅", type = "message")
-        }
-      })
-      
+      showNotification(paste("✅ Heatmap matrix ready:", nrow(mat), "genes ×", ncol(mat), "samples"), type = "message")
+      return(mat)
       
     }, error = function(e) {
-      log_error(e, "Heatmap")
-      showNotification("Error generating heatmap.", type = "error")
+      log_error(e, "Heatmap Matrix")
+      showNotification("❌ Error building heatmap matrix", type = "error")
+      return(NULL)
     })
   })
   
+  
+  # === Render Plotly Heatmap ===
+  output$heatmap_plot <- renderPlotly({
+    mat <- heatmap_matrix()
+    req(mat)
     
-    # === Heatmap Download ===
-    output$download_heatmap <- downloadHandler(
-      filename = function() {
-        paste0("heatmap_", Sys.Date(), ".png")
-      },
-      content = function(file) {
-        req(heatmap_matrix())
-        png(file, width = 1200, height = 1000, res = 150)
-        print(
-          pheatmap::pheatmap(
-            heatmap_matrix(),
-            show_rownames = FALSE,
-            show_colnames = TRUE,
-            clustering_distance_rows = "euclidean",
-            clustering_distance_cols = "euclidean",
-            clustering_method = "complete",
-            main = "Heatmap - Final DE Genes"
-          )
-        )
-        dev.off()
-      }
-    )
+    plot_ly(
+      z = mat,
+      x = colnames(mat),
+      y = rownames(mat),
+      type = "heatmap",
+      colorscale = "Viridis",
+      colorbar = list(title = "Z-score"),
+      hovertemplate = paste(
+        "Gene: %{y}<br>",
+        "Sample: %{x}<br>",
+        "Value: %{z:.2f}<extra></extra>"
+      )
+    ) %>%
+      layout(
+        title = "Heatmap - Final DE Genes (Clustered Ensembl IDs)",
+        xaxis = list(title = "Samples"),
+        yaxis = list(title = "Genes"),
+        margin = list(l = 100, b = 100)
+      )
+  })
+  
     # === ENRICHMENT UTILS ===
     perform_enrichment <- function(gene_list, db) {
       if (length(gene_list) < 2) return(NULL)
@@ -845,10 +825,42 @@ server <- function(input, output, session) {
         output$rf_roc_plot <- renderPlotly({
           roc_plot
         })
+        rf_predictions_data(pred_table)
+        rf_metrics_data(data.frame(
+          Sensitivity = round(sens, 3),
+          Specificity = round(spec, 3),
+          `AUC (ROC)` = ifelse(is.na(auc_val), "N/A", auc_val)
+        ))
+        
+        
         
         showNotification("Random Forest classification (w/ split) done ✅", type = "message")
       }, error = function(e) {
         showNotification(paste("RF Classification Error:", e$message), type = "error")
       })
     })
+    output$download_rf_predictions <- downloadHandler(
+      filename = function() {
+        paste0("rf_predictions_", Sys.Date(), ".csv")
+      },
+      content = function(file) {
+        req(rf_predictions_data())
+        write.csv(rf_predictions_data(), file, row.names = FALSE)
+      }
+    )
     
+    output$download_rf_metrics <- downloadHandler(
+      filename = function() {
+        paste0("rf_metrics_", Sys.Date(), ".csv")
+      },
+      content = function(file) {
+        req(rf_metrics_data())
+        write.csv(rf_metrics_data(), file, row.names = FALSE)
+      }
+    )
+    
+   
+} # <- closes server function
+
+# === Launch App ===
+shinyApp(server = server, ui = ui)
