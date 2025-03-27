@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e  # Exit on error
+
 APP_NAME="rna-seq-shiny"
 IMAGE_TAG="rna-seq-app:latest"
 PORT=8787
@@ -7,12 +9,8 @@ PORT=8787
 echo "🔧 Building $APP_NAME Docker image..."
 docker build -t $IMAGE_TAG .
 
-if [ $? -ne 0 ]; then
-    echo "❌ Docker build failed. Check output above."
-    exit 1
-fi
-
 echo "🚀 Running $APP_NAME on http://localhost:$PORT"
-docker run --rm -p $PORT:8080 \
-    -v $(pwd):/app \
+docker run --rm \
+    --name $APP_NAME \
+    -p $PORT:8080 \
     $IMAGE_TAG
