@@ -108,28 +108,34 @@ table.dataTable thead th {
   display: block !important;
   visibility: visible !important;
 }
-/* === Fix file input label text color === */
-.shiny-input-container .shiny-file-input .form-control {
-  color: #000000 !important;  /* Black text for better contrast */
-  font-weight: bold;
-}
-/* === Fix the file input filename color === */
-.shiny-file-input .shiny-file-input-text {
-  color: #000000 !important;   /* Force black text for filename */
-  font-weight: bold;
 
-/* === Fix file input filename text === */
-input.form-control.shiny-file-input-text {
-  color: #000000 !important; /* 🖤 force black filename text */
-  background-color: #ffffff !important; /* optional: white bg for contrast */
-  font-weight: bold;
-}
+
 /* === Force all form-control inputs to use black text === */
-input.form-control {
+input.form-control,
+select.form-control,
+textarea.form-control {
   color: #000000 !important;
 }
 
+/* === Fix file input label text color === */
+.shiny-input-container .shiny-file-input .form-control {
+  color: #000000 !important;
+  font-weight: bold;
+  background-color: #ffffff !important;
+}
 
+/* === Fix the file input filename color === */
+.shiny-file-input .shiny-file-input-text {
+  color: #000000 !important;
+  background-color: #ffffff !important;
+  font-weight: bold;
+}
+
+/* === Fixes missing closing brace === */
+input.form-control.shiny-file-input-text {
+  color: #000000 !important;
+  background-color: #ffffff !important;
+  font-weight: bold;
 }
 
 
