@@ -11,7 +11,6 @@ From: rocker/r-ver:4.3.1
     export SHINY_PORT=8080
     export DEBIAN_FRONTEND=noninteractive
     export MAKEFLAGS="-j4"
-
 %post
     apt-get update && apt-get install -y \
         build-essential \
@@ -36,13 +35,14 @@ From: rocker/r-ver:4.3.1
     R -e "install.packages(c( \
       'shiny', 'shinyjs', 'shinythemes', 'DT', 'plotly', 'pROC', 'pwr', \
       'ggplot2', 'caret', 'randomForest', 'dplyr', \
-      'foreach', 'doParallel', 'umap', 'enrichR' \
+      'foreach', 'doParallel', 'umap', 'enrichR', 'pheatmap' \
     ), repos='https://cloud.r-project.org')"
 
     echo "🧬 Installing Bioconductor packages..."
     R -e "if (!requireNamespace('BiocManager', quietly=TRUE)) install.packages('BiocManager'); \
           BiocManager::install(version='3.18', ask=FALSE); \
           BiocManager::install(c('limma', 'edgeR', 'biomaRt'), ask=FALSE, update=FALSE, dependencies=TRUE)"
+
 
 %files
     app.R /app/app.R
