@@ -77,32 +77,47 @@ RNA_SEQ_APP/
 └── www/
     └── Arcane_Alchemy_Theme.css
 
+
 ⚙️ Deployment Options
 🐳 Run Locally with Docker
-
+bash
+Copy
+Edit
 git clone https://github.com/your-user/RNA_SEQ_APP.git
 cd RNA_SEQ_APP
 bash run.sh
-Open your browser at: http://localhost:8787
+Open your browser at:
+http://localhost:8787
 
 🧬 Run on HPC with Singularity or Apptainer
-singularity build rna-seq.sif Singularity.def
+🔧 Build the container
+bash
+Copy
+Edit
+# Using Singularity
+singularity build rna_seq_app.sif Singularity.def
 
-apptainer build rna-seq.sif Singularity.def
-
-Run:
-
-singularity run --bind $(pwd):/mnt rna-seq.sif
+# Or using Apptainer (drop-in replacement for Singularity)
+apptainer build rna_seq_app.sif Singularity.def
+🚀 Run the app
+bash
+Copy
+Edit
+# Run with proper binding so the app can access code and CSS
+singularity run --bind $(pwd):/app rna_seq_app.sif
 # or
-apptainer run --bind $(pwd):/mnt rna-seq.sif
+apptainer run --bind $(pwd):/app rna_seq_app.sif
+📁 Make sure your app.R and www/ folder are in the current directory when using --bind.
 
-Port Forward (if remote cluster):
+🌐 Port Forwarding for Remote Access (e.g., HPC cluster)
+If running on a remote server or cluster, enable port forwarding:
 
-
-ssh -L 8080:localhost:8080 youruser@cluster
-
-Open in browser: http://localhost:8080
-
+bash
+Copy
+Edit
+ssh -L 8080:localhost:8080 youruser@your-cluster
+Then open your browser locally at:
+http://localhost:8080
 🛠️ Using the Makefile
 A Makefile is included to automate builds and runs:
 
