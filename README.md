@@ -100,9 +100,8 @@ singularity build rna_seq_app.sif Singularity.def
 # Or using Apptainer (drop-in replacement for Singularity)
 apptainer build rna_seq_app.sif Singularity.def
 🚀 Run the app
-bash
-Copy
-Edit
+in bash
+
 # Run with proper binding so the app can access code and CSS
 singularity run --bind $(pwd):/app rna_seq_app.sif
 # or
@@ -112,12 +111,44 @@ apptainer run --bind $(pwd):/app rna_seq_app.sif
 🌐 Port Forwarding for Remote Access (e.g., HPC cluster)
 If running on a remote server or cluster, enable port forwarding:
 
-bash
-Copy
-Edit
+in bash
+
 ssh -L 8080:localhost:8080 youruser@your-cluster
 Then open your browser locally at:
 http://localhost:8080
+
+🧬 Run on HPC with SLURM + Singularity
+
+🛠️ 1. Build Singularity Image (if not yet built)
+b
+
+in bash
+
+singularity build rnaseq_shiny.sif Singularity.def
+ 🚀 2. Submit SLURM Job
+
+in bash
+sbatch submit_rna_seq_app.slurm
+
+📍 3. Monitor Logs
+ in bash
+
+# Tail SLURM job logs
+tail -f logs/slurm_<job_id>.out
+tail -f logs/slurm_<job_id>.err
+Replace <job_id> with your actual job number
+
+🌐 4. Port Forwarding (Optional)
+
+If running remotely, forward port 3838
+in bash
+ssh -L 3838:localhost:3838 youruser@hpc.cluster.edu
+
+Then open: http://localhost:3838
+
+
+
+
 🛠️ Using the Makefile
 A Makefile is included to automate builds and runs:
 
