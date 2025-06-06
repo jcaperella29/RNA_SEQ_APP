@@ -1,0 +1,74 @@
+
+
+
+Bootstrap: docker
+From: rocker/shiny:4.3.1
+
+%labels
+    Maintainer Your_Name
+    Version RNA-SEQ-APP-1.0
+
+%environment
+    export PATH=/usr/local/bin:$PATH
+    export R_LIBS_USER=/usr/local/lib/R/site-library
+
+%post
+    ## Update and install system deps
+    apt-get update && apt-get install -y \
+        libcurl4-openssl-dev \
+        libssl-dev \
+        libxml2-dev \
+        libgit2-dev \
+        libhdf5-dev \
+        libgsl-dev \
+        libudunits2-dev \
+        libv8-dev \
+        libglpk-dev \
+        libxt-dev \
+        libx11-dev \
+        libpng-dev \
+        libharfbuzz-dev \
+        libfribidi-dev \
+        wget \
+        curl \
+        git \
+        gdebi-core \
+        nano \
+        libjpeg-dev \
+        libfontconfig1-dev \
+        libfreetype6-dev \
+        libtiff5-dev \
+        libtiff-dev \
+        zlib1g-dev \
+        libncurses-dev \
+        libbz2-dev \
+        liblzma-dev \
+        libreadline-dev \
+        libxrender1 \
+        libxext6 \
+        fonts-dejavu \
+        xvfb
+
+    ## Install Bioconductor/CRAN packages
+    R -e "install.packages(c('shiny', 'shinythemes', 'shinyjs', 'DT', 'plotly', 'randomForest', 'caret', 'pROC', 'doParallel', 'foreach', 'umap', 'ggplot2', 'dplyr', 'pheatmap', 'pwr'))"
+    
+    R -e "if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager')"
+    R -e "BiocManager::install(c('limma', 'edgeR', 'biomaRt'))"
+
+    ## Install enrichR from GitHub
+    R -e "install.packages('remotes')"
+    R -e "remotes::install_github('wjawaid/enrichR')"
+
+    ## Create app directory
+    mkdir -p /srv/shiny-server/app
+
+    ## (Optional) Copy your app files here if building locally
+    # cp -r /path/to/your/app/* /srv/shiny-server/app/
+
+%runscript
+    ## Run Shiny app on container start
+    exec R -e "shiny::runApp('/srv/shiny-server/app', host = '0.0.0.0', port = 3838, launch.browser = FALSE)"
+
+%startscript
+    ## Same as runscript for SLURM
+    exec R -e "shiny::runApp('/srv/shiny-server/app', host = '0.0.0.0', port = 3838, launch.browser = FALSE)"
