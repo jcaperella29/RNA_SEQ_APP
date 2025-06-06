@@ -1,4 +1,7 @@
 
+
+
+
 # === RNA-SEQ APP: Differential Expression & Enrichment ===
 library(shiny)
 library(shinythemes)
@@ -29,12 +32,15 @@ options(shiny.error = function() {
   cat(msg, file = log_file, append = TRUE)
 })
 #ui
-
 ui <- fluidPage(
   useShinyjs(),
   tags$head(
-    tags$link(rel = "stylesheet", type = "text/css", href ="Arcane _Alchemy _Theme.css" )
+    includeCSS("www/style.css")
+    
+    
+    
   ),
+  
   titlePanel("JCAP RNA-SEQ Analyzer"),
   
   sidebarLayout(
@@ -42,13 +48,13 @@ ui <- fluidPage(
       fileInput("counts_input", "Input Counts", accept = c(".csv", ".txt")),
       fileInput("phenotype_input", "Input Phenotype Data", accept = c(".csv", ".txt")),
       uiOutput("phenotype_column_selector"),
+      
       actionButton("running_Dif", "Run Differential Expression"),
       actionButton("plot_pca", "PCA Plot"),
       actionButton("plot_umap", "UMAP Plot"),
       actionButton("plot_volcano", "Volcano Plot"),
       actionButton("plot_heatmap", "Plot Heatmap"),
       downloadButton("output", "Download DE Results"),
-      
       
       hr(),
       h4("Pathway Enrichment"),
@@ -79,13 +85,14 @@ ui <- fluidPage(
     
     mainPanel(
       tabsetPanel(id = "main_tabset",
+                  tabPanel("Read Me", verbatimTextOutput("JCAP_RNA_SEQ_Readme.txt")),
                   tabPanel("Differential Expression Results", DTOutput("Dif_expr_results")),
                   tabPanel("PCA Plot", plotlyOutput("pcaplot")),
                   tabPanel("UMAP Plot", plotlyOutput("umapplot")),
                   tabPanel("Volcano Plot", plotlyOutput("volcano_plot")),
                   tabPanel("Heatmap", plotlyOutput("heatmap_plot", height = "800px")),
                   
-                  tabPanel("Read Me", verbatimTextOutput("JCAP RNA_SEQ Readme.txt")),
+                  
                   
                   tabPanel("Pathway Analysis",
                            tabsetPanel(
