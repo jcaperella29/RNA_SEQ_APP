@@ -7,10 +7,10 @@ pipeline {
 
     stages {
         stage('Clone Repo') {
-            steps {
-                git 'https://github.com/jcaperella29/RNA_SEQ_APP.git'
-            }
-        }
+    steps {
+        git branch: 'main', url: 'https://github.com/jcaperella29/RNA_SEQ_APP.git'
+    }
+}
 
         stage('Install R Packages') {
             steps {
