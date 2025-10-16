@@ -1,0 +1,124 @@
+# make_mouse_cancer_like_data.R
+# Generate cancer-like RNA-seq counts where DE genes are enriched for proliferation/mitosis.
+# Outputs: counts_<species>_cancer.csv, phenotype_<species>_cancer.csv
+# Species codes: "mmusculus", "hsapiens", "drerio", "dmelanogaster"
+
+## --------- USER SETTINGS ----------
+species    <- "mmusculus"  # <- change if you want another species
+n_genes    <- 4000         # total genes to include
+n_per_grp  <- 6            # samples per group (GroupA vs GroupB)
+de_target  <- 0.15         # ~15% of genes DE (picked from GO terms below)
+fc         <- 2.2          # fold-change for DE genes (GroupB up)
+base_mu    <- 60           # baseline mean counts
+dispersion <- 0.20         # NB dispersion (1/size); smaller => less overdispersion
+set.seed(123)
+
+## --------- PACKAGES ----------
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+if (!requireNamespace("biomaRt", quietly = TRUE)) BiocManager::install("biomaRt", ask = FALSE, update = FALSE)
+suppressPackageStartupMessages(library(biomaRt))
+
+## --------- HELPERS ----------
+bm_dataset_for <- function(sp) switch(
+  sp,
+  "hsapiens"      = "hsapiens_gene_ensembl",
+  "mmusculus"     = "mmusculus_gene_ensembl",
+  "drerio"        = "drerio_gene_ensembl",
+  "dmelanogaster" = "dmelanogaster_gene_ensembl",
+  "mmusculus_gene_ensembl"
+)
+
+# GO terms strongly tied to cancer/proliferation
+go_terms <- c(
+  "GO:0007049",  # cell cycle
+  "GO:0006260",  # DNA replication
+  "GO:0007067",  # mitotic nuclear division
+  "GO:0042127"   # regulation of cell proliferation
+)
+
+# Negative binomial sampler
+rnb <- function(mu, size, n) rnbinom(n, mu = mu, size = size)
+
+## --------- GENE POOL & CANCER SET FROM GO ----------
+message("→ Connecting to Ensembl for species: ", species)
+mart <- tryCatch(
+  useEnsembl(biomart = "genes", dataset = bm_dataset_for(species)),
+  error = function(e) {
+    message("   ⚠️ Falling back to mirror 'uswest' ...")
+    useEnsembl(biomart = "genes", dataset = bm_dataset_for(species), mirror = "uswest")
+  }
+)
+
+# All available Ensembl IDs (for sampling non-DE background)
+all_ids <- tryCatch(getBM(attributes = "ensembl_gene_id", mart = mart)[,1], error = function(e) character(0))
+if (length(all_ids) < 1000) stop("Failed to retrieve gene IDs from Ensembl; check network and try again.")
+
+# Get genes annotated to the selected GO terms
+message("→ Fetching genes for cancer-like GO terms: ", paste(go_terms, collapse = ", "))
+go_map <- tryCatch(
+  getBM(
+    attributes = c("ensembl_gene_id", "go_id"),
+    filters    = "go",
+    values     = go_terms,
+    mart       = mart
+  ),
+  error = function(e) data.frame()
+)
+
+cancer_genes <- unique(go_map$ensembl_gene_id)
+if (length(cancer_genes) < 50) {
+  message("   ⚠️ Few GO-annotated genes returned; expanding with additional cell-cycle terms.")
+  extra_go <- c("GO:1903047","GO:0000278","GO:0007059") # mitotic cell cycle process, mitotic cell cycle, chromosome segregation
+  go_map2 <- tryCatch(
+    getBM(attributes = c("ensembl_gene_id","go_id"), filters = "go", values = extra_go, mart = mart),
+    error = function(e) data.frame()
+  )
+  cancer_genes <- unique(c(cancer_genes, go_map2$ensembl_gene_id))
+}
+
+# Build final gene universe for the dataset
+n_de <- max(10, round(de_target * n_genes))
+# Ensure we have enough DE candidates; if not, sample with replacement
+de_candidates <- if (length(cancer_genes) >= n_de) cancer_genes else sample(cancer_genes, n_de, replace = TRUE)
+
+# Sample the full set of n_genes, guaranteeing all DE candidates are included
+background_pool <- setdiff(all_ids, de_candidates)
+bg_needed <- max(0, n_genes - length(de_candidates))
+bg_genes  <- sample(background_pool, bg_needed, replace = length(background_pool) < bg_needed)
+gene_set  <- unique(c(de_candidates, bg_genes))
+# If still short due to tiny background, pad from all_ids
+if (length(gene_set) < n_genes) {
+  pad <- sample(setdiff(all_ids, gene_set), n_genes - length(gene_set), replace = TRUE)
+  gene_set <- unique(c(gene_set, pad))
+}
+gene_set <- gene_set[seq_len(min(length(gene_set), n_genes))]
+is_de <- gene_set %in% de_candidates
+
+message("→ Selected ", sum(is_de), " DE genes from cancer/proliferation GO sets out of ", length(gene_set), " total genes.")
+
+## --------- SIMULATE COUNTS ----------
+samples <- c(paste0("S", 1:n_per_grp, "_A"), paste0("S", 1:n_per_grp, "_B"))
+groups  <- factor(c(rep("GroupA", n_per_grp), rep("GroupB", n_per_grp)), levels = c("GroupA","GroupB"))
+names(groups) <- samples
+
+size_param <- 1 / dispersion
+counts <- matrix(0, nrow = length(gene_set), ncol = length(samples),
+                 dimnames = list(gene_set, samples))
+
+for (i in seq_along(gene_set)) {
+  mu_A <- base_mu * runif(1, 0.6, 1.6)      # per-gene baseline heterogeneity
+  mu_B <- if (is_de[i]) mu_A * fc else mu_A # cancer genes up in GroupB
+  counts[i, groups == "GroupA"] <- rnb(mu_A, size_param, n_per_grp)
+  counts[i, groups == "GroupB"] <- rnb(mu_B, size_param, n_per_grp)
+}
+
+## --------- WRITE FILES ----------
+counts_file <- paste0("counts_", species, "_cancer.csv")
+pheno_file  <- paste0("phenotype_", species, "_cancer.csv")
+write.csv(counts, counts_file, row.names = TRUE, quote = FALSE)
+phenotype <- data.frame(row.names = samples, condition = groups, check.names = FALSE)
+write.csv(phenotype, pheno_file, row.names = TRUE, quote = FALSE)
+
+message("✅ Wrote ", counts_file, " (", nrow(counts), " genes × ", ncol(counts), " samples)")
+message("✅ Wrote ", pheno_file, " (", nrow(phenotype), " samples; column = 'condition')")
+message("→ In your app: Species = ", species, " | Phenotype column = 'condition'")
