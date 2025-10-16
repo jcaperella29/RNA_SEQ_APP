@@ -1,19 +1,18 @@
-
-
-
 Bootstrap: docker
 From: rocker/shiny:4.3.1
 
 %labels
     Maintainer Your_Name
-    Version RNA-SEQ-APP-1.0
+    Version RNA-SEQ-APP-1.1
 
 %environment
     export PATH=/usr/local/bin:$PATH
     export R_LIBS_USER=/usr/local/lib/R/site-library
+    export LANG=en_US.UTF-8
+    export LC_ALL=en_US.UTF-8
 
 %post
-    ## Update and install system deps
+    ## ---- System dependencies ----
     apt-get update && apt-get install -y \
         libcurl4-openssl-dev \
         libssl-dev \
@@ -49,26 +48,27 @@ From: rocker/shiny:4.3.1
         fonts-dejavu \
         xvfb
 
-    ## Install Bioconductor/CRAN packages
-    R -e "install.packages(c('shiny', 'shinythemes', 'shinyjs', 'DT', 'plotly', 'randomForest', 'caret', 'pROC', 'doParallel', 'foreach', 'umap', 'ggplot2', 'dplyr', 'pheatmap', 'pwr'))"
-    
+    ## ---- Base R packages ----
+    R -e "install.packages(c('shiny','shinythemes','shinyjs','DT','plotly','randomForest','caret','pROC','doParallel','foreach','umap','ggplot2','dplyr','pheatmap','pwr','remotes'))"
+
+    ## ---- Bioconductor packages ----
     R -e "if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager')"
-    R -e "BiocManager::install(c('limma', 'edgeR', 'biomaRt'))"
+    R -e "BiocManager::install(c('limma','edgeR','biomaRt','recount','recount3','BiocParallel'), ask = FALSE, update = FALSE)"
 
-    ## Install enrichR from GitHub
-    R -e "install.packages('remotes')"
+    ## ---- External enrichment packages ----
     R -e "remotes::install_github('wjawaid/enrichR')"
+    R -e "install.packages('gprofiler2')"
 
-    ## Create app directory
+    ## ---- Create Shiny app directory ----
     mkdir -p /srv/shiny-server/app
 
-    ## (Optional) Copy your app files here if building locally
-    # cp -r /path/to/your/app/* /srv/shiny-server/app/
+    ## (Optional) Copy your app if building locally
+    # cp -r /path/to/RNA_SEQ_APP/* /srv/shiny-server/app/
 
 %runscript
-    ## Run Shiny app on container start
-    exec R -e "shiny::runApp('/srv/shiny-server/app', host = '0.0.0.0', port = 3838, launch.browser = FALSE)"
+    ## Launch the app (default for docker run or singularity run)
+    exec R -e "shiny::runApp('/srv/shiny-server/app', host='0.0.0.0', port=3838, launch.browser=FALSE)"
 
 %startscript
-    ## Same as runscript for SLURM
-    exec R -e "shiny::runApp('/srv/shiny-server/app', host = '0.0.0.0', port = 3838, launch.browser = FALSE)"
+    ## Same behavior when used with apptainer start
+    exec R -e "shiny::runApp('/srv/shiny-server/app', host='0.0.0.0', port=3838, launch.browser=FALSE)"
