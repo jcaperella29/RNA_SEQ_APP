@@ -10,6 +10,11 @@ From: rocker/shiny:4.3.1
     export R_LIBS_USER=/usr/local/lib/R/site-library
     export LANG=en_US.UTF-8
     export LC_ALL=en_US.UTF-8
+%files
+    app.r               /srv/shiny-server/app/app.R
+    www                 /srv/shiny-server/app/www
+    get_annotation.R    /srv/shiny-server/app/get_annotation.R
+    email_log.R         /srv/shiny-server/app/email_log.R
 
 %post
     ## ---- System dependencies ----
