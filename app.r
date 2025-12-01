@@ -557,35 +557,35 @@ server <- function(input, output, session) {
       return(res)
     }
 
-    # Non-human → g:Profiler
-    source_map <- list("GO:BP" = "GO:BP", "KEGG" = "KEGG", "REAC" = "REAC", "WP" = "WP")
-    sel_source <- unname(source_map[[db]])
-    if (is.null(sel_source)) return(NULL)
+  # Non-human → g:Profiler
+source_map <- list("GO:BP" = "GO:BP", "KEGG" = "KEGG", "REAC" = "REAC", "WP" = "WP")
+sel_source <- unname(source_map[[db]])
+if (is.null(sel_source)) return(NULL)
 
-    org <- gp_org_for(species_code)
-    g <- tryCatch(
-      gprofiler2::gost(
-        query    = gene_list,
-        organism = org,
-        sources  = sel_source,
-        correction_method = "g_SCS"
-      ),
-      error = function(e) NULL
-    )
-    if (is.null(g) || is.null(g$result) || nrow(g$result) == 0) return(NULL)
+org <- gp_org_for(species_code)
+g <- tryCatch(
+  gprofiler2::gost(
+    query    = gene_list,
+    organism = org,
+    sources  = sel_source,
+    correction_method = "g_SCS"
+  ),
+  error = function(e) NULL
+)
+if (is.null(g) || is.null(g$result) || nrow(g$result) == 0) return(NULL)
 
-    df <- g$result
-    # Proxy Combined.Score to match Enrichr-like UX
-    comb <- -log10(df$p_value) * (df$intersection_size / df$term_size)
+df <- g$result
+# Proxy Combined.Score to match Enrichr-like UX
+comb <- -log10(df$p_value) * (df$intersection_size / df$term_size)
 
-    out <- data.frame(
-      Term             = df$term_name,
-      Adjusted.P.value = df$p_value,  # g:Profiler returns adjusted p-values as p_value
-      Combined.Score   = comb,
-      stringsAsFactors = FALSE
-    )
-    out[order(out$Adjusted.P.value), ]
-  }
+out <- data.frame(
+  Term             = df$term_name,
+  Adjusted.P.value = df$p_value,         # adjusted p-values
+  Combined.Score   = comb,
+  Genes            = df$intersection,    # <-- add genes for each term
+  stringsAsFactors = FALSE
+)
+out[order(out$Adjusted.P.value), ]
 
   plot_enrichment_bar <- function(df, title) {
     top <- head(df[order(df$Adjusted.P.value), ], 10)
@@ -654,20 +654,26 @@ server <- function(input, output, session) {
   })
 
   # === Enrichment Tables & Plots ===
-  output$enrich_all_dt <- renderDT({
-    req(enrich_all_res())
-    datatable(enrich_all_res()[, c("Term", "Adjusted.P.value", "Combined.Score")])
-  })
+output$enrich_all_dt <- renderDT({
+  req(enrich_all_res())
+  df <- enrich_all_res()
+  keep <- intersect(c("Term", "Adjusted.P.value", "Combined.Score", "Genes"), colnames(df))
+  datatable(df[, keep, drop = FALSE])
+})
 
-  output$enrich_up_dt <- renderDT({
-    req(enrich_up_res())
-    datatable(enrich_up_res()[, c("Term", "Adjusted.P.value", "Combined.Score")])
-  })
+output$enrich_up_dt <- renderDT({
+  req(enrich_up_res())
+  df <- enrich_up_res()
+  keep <- intersect(c("Term", "Adjusted.P.value", "Combined.Score", "Genes"), colnames(df))
+  datatable(df[, keep, drop = FALSE])
+})
 
-  output$enrich_down_dt <- renderDT({
-    req(enrich_down_res())
-    datatable(enrich_down_res()[, c("Term", "Adjusted.P.value", "Combined.Score")])
-  })
+output$enrich_down_dt <- renderDT({
+  req(enrich_down_res())
+  df <- enrich_down_res()
+  keep <- intersect(c("Term", "Adjusted.P.value", "Combined.Score", "Genes"), colnames(df))
+  datatable(df[, keep, drop = FALSE])
+})
 
   output$enrich_all_plot <- renderPlotly({
     req(enrich_all_res()); showNotification("Enrichment plot (All) ready ✅", type = "default")
@@ -919,3 +925,4 @@ server <- function(input, output, session) {
 
 # === Launch App ===
 shinyApp(server = server, ui = ui)
+
