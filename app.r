@@ -548,147 +548,192 @@ server <- function(input, output, session) {
   perform_enrichment <- function(gene_list, db, species_code) {
     if (length(gene_list) < 2) return(NULL)
 
+    # ----- Human: Enrichr -----
     if (species_code == "hsapiens") {
-      # Human → Enrichr
       res <- tryCatch(
         enrichR::enrichr(gene_list, databases = db)[[1]],
         error = function(e) NULL
       )
+      if (is.null(res) || nrow(res) == 0) return(NULL)
+
+      # Make sure column names are consistent
+      if ("Adjusted.P.value" %in% colnames(res)) {
+        names(res)[names(res) == "Adjusted.P.value"] <- "Adjusted.P.value"
+      }
+      if ("Combined.Score" %in% colnames(res)) {
+        names(res)[names(res) == "Combined.Score"] <- "Combined.Score"
+      }
+
       return(res)
     }
 
-  # Non-human → g:Profiler
-source_map <- list("GO:BP" = "GO:BP", "KEGG" = "KEGG", "REAC" = "REAC", "WP" = "WP")
-sel_source <- unname(source_map[[db]])
-if (is.null(sel_source)) return(NULL)
+    # ----- Non-human: g:Profiler (species-aware) -----
+    source_map <- list(
+      "GO:BP" = "GO:BP",
+      "KEGG"  = "KEGG",
+      "REAC"  = "REAC",
+      "WP"    = "WP"
+    )
+    sel_source <- unname(source_map[[db]])
+    if (is.null(sel_source)) return(NULL)
 
-org <- gp_org_for(species_code)
-g <- tryCatch(
-  gprofiler2::gost(
-    query    = gene_list,
-    organism = org,
-    sources  = sel_source,
-    correction_method = "g_SCS"
-  ),
-  error = function(e) NULL
-)
-if (is.null(g) || is.null(g$result) || nrow(g$result) == 0) return(NULL)
+    org <- gp_org_for(species_code)
+    g <- tryCatch(
+      gprofiler2::gost(
+        query             = gene_list,
+        organism          = org,
+        sources           = sel_source,
+        correction_method = "g_SCS"
+      ),
+      error = function(e) NULL
+    )
+    if (is.null(g) || is.null(g$result) || nrow(g$result) == 0) return(NULL)
 
-df <- g$result
-# Proxy Combined.Score to match Enrichr-like UX
-comb <- -log10(df$p_value) * (df$intersection_size / df$term_size)
+    df <- g$result
 
-out <- data.frame(
-  Term             = df$term_name,
-  Adjusted.P.value = df$p_value,         # adjusted p-values
-  Combined.Score   = comb,
-  Genes            = df$intersection,    # <-- add genes for each term
-  stringsAsFactors = FALSE
-)
-out[order(out$Adjusted.P.value), ]
+    # Proxy Combined.Score to match Enrichr-like UX
+    comb <- -log10(df$p_value) * (df$intersection_size / df$term_size)
 
+    out <- data.frame(
+      Term             = df$term_name,
+      Adjusted.P.value = df$p_value,        # g:Profiler's adjusted p
+      Combined.Score   = comb,
+      Genes            = df$intersection,   # genes per term
+      stringsAsFactors = FALSE
+    )
+    out[order(out$Adjusted.P.value), ]
+  }
+
+  # ---- Barplot helper (works for both Enrichr & g:Profiler outputs) ----
   plot_enrichment_bar <- function(df, title) {
+    if (is.null(df) || nrow(df) == 0) return(NULL)
+
+    # Standardize column names if needed
+    if ("Adjusted.P.value" %in% colnames(df)) {
+      names(df)[names(df) == "Adjusted.P.value"] <- "Adjusted.P.value"
+    }
+
     top <- head(df[order(df$Adjusted.P.value), ], 10)
     top$Term <- factor(top$Term, levels = rev(top$Term))
+
     plotly::plot_ly(
       data = top,
-      x = ~-log10(Adjusted.P.value),
-      y = ~Term,
+      x    = ~-log10(Adjusted.P.value),
+      y    = ~Term,
       type = "bar",
       orientation = "h",
-      hoverinfo = "text",
-      text = ~paste0("P.adj: ", signif(Adjusted.P.value, 3),
-                     "<br>Score: ", round(Combined.Score, 2))
+      hoverinfo   = "text",
+      text = ~paste0(
+        "P.adj: ", signif(Adjusted.P.value, 3),
+        "<br>Score: ", round(Combined.Score, 2),
+        if ("Genes" %in% colnames(top))
+          paste0("<br>Genes: ", Genes)
+        else
+          ""
+      )
     ) %>%
       layout(
-        title = list(text = title),
-        xaxis = list(title = "-log10 Adjusted P-value"),
-        yaxis = list(title = ""),
+        title  = list(text = title),
+        xaxis  = list(title = "-log10 Adjusted P-value"),
+        yaxis  = list(title = ""),
         margin = list(l = 200)
       )
   }
 
+  # ---- Reactive holders for enrichment results ----
   enrich_all_res  <- reactiveVal()
   enrich_up_res   <- reactiveVal()
   enrich_down_res <- reactiveVal()
 
+  # ---- Enrichment triggers ----
   observeEvent(input$enrich_all_btn, {
     req(final_results())
     showNotification("Enriching all DE genes", type = "message")
+
     db <- input$enrich_db
     sp <- input$species
     genes <- na.omit(final_results()$symbol)
-    # For non-human, no ortholog mapping needed here because g:Profiler is species-aware.
-    # For human, we pass symbols directly to Enrichr.
-    res <- if (sp == "hsapiens") {
-      perform_enrichment(genes, db, sp)
-    } else {
-      perform_enrichment(genes, db, sp)
-    }
+
+    res <- perform_enrichment(genes, db, sp)
     enrich_all_res(res)
+
     showNotification("All DE Genes Enriched ✅", type = "message")
   })
 
   observeEvent(input$enrich_up_btn, {
     req(final_results())
     showNotification("Enriching upregulated DE genes", type = "message")
+
     db <- input$enrich_db
     sp <- input$species
     df <- final_results()
     genes <- na.omit(df$symbol[df$logFC > 1 & df$adj.P.Val < 0.05])
+
     res <- perform_enrichment(genes, db, sp)
     enrich_up_res(res)
+
     showNotification("Upregulated Genes Enriched ✅", type = "message")
   })
 
   observeEvent(input$enrich_down_btn, {
     req(final_results())
     showNotification("Enriching downregulated DE genes", type = "message")
+
     db <- input$enrich_db
     sp <- input$species
     df <- final_results()
     genes <- na.omit(df$symbol[df$logFC < -1 & df$adj.P.Val < 0.05])
+
     res <- perform_enrichment(genes, db, sp)
     enrich_down_res(res)
+
     showNotification("Downregulated Genes Enriched ✅", type = "message")
   })
 
-  # === Enrichment Tables & Plots ===
-output$enrich_all_dt <- renderDT({
-  req(enrich_all_res())
-  df <- enrich_all_res()
-  keep <- intersect(c("Term", "Adjusted.P.value", "Combined.Score", "Genes"), colnames(df))
-  datatable(df[, keep, drop = FALSE])
-})
+  # ---- Enrichment tables (show Term / p / score / genes if present) ----
+  output$enrich_all_dt <- renderDT({
+    req(enrich_all_res())
+    df <- enrich_all_res()
+    keep <- intersect(c("Term", "Adjusted.P.value", "Combined.Score", "Genes"),
+                      colnames(df))
+    datatable(df[, keep, drop = FALSE])
+  })
 
-output$enrich_up_dt <- renderDT({
-  req(enrich_up_res())
-  df <- enrich_up_res()
-  keep <- intersect(c("Term", "Adjusted.P.value", "Combined.Score", "Genes"), colnames(df))
-  datatable(df[, keep, drop = FALSE])
-})
+  output$enrich_up_dt <- renderDT({
+    req(enrich_up_res())
+    df <- enrich_up_res()
+    keep <- intersect(c("Term", "Adjusted.P.value", "Combined.Score", "Genes"),
+                      colnames(df))
+    datatable(df[, keep, drop = FALSE])
+  })
 
-output$enrich_down_dt <- renderDT({
-  req(enrich_down_res())
-  df <- enrich_down_res()
-  keep <- intersect(c("Term", "Adjusted.P.value", "Combined.Score", "Genes"), colnames(df))
-  datatable(df[, keep, drop = FALSE])
-})
+  output$enrich_down_dt <- renderDT({
+    req(enrich_down_res())
+    df <- enrich_down_res()
+    keep <- intersect(c("Term", "Adjusted.P.value", "Combined.Score", "Genes"),
+                      colnames(df))
+    datatable(df[, keep, drop = FALSE])
+  })
 
+  # ---- Enrichment barplots ----
   output$enrich_all_plot <- renderPlotly({
-    req(enrich_all_res()); showNotification("Enrichment plot (All) ready ✅", type = "default")
+    req(enrich_all_res())
+    showNotification("Enrichment plot (All) ready ✅", type = "default")
     plot_enrichment_bar(enrich_all_res(), "All DE Genes")
   })
 
   output$enrich_up_plot <- renderPlotly({
-    req(enrich_up_res()); showNotification("Enrichment plot (Upregulated) ready ✅", type = "default")
+    req(enrich_up_res())
+    showNotification("Enrichment plot (Upregulated) ready ✅", type = "default")
     plot_enrichment_bar(enrich_up_res(), "Upregulated Genes")
   })
 
   output$enrich_down_plot <- renderPlotly({
-    req(enrich_down_res()); showNotification("Enrichment plot (Downregulated) ready ✅", type = "default")
+    req(enrich_down_res())
+    showNotification("Enrichment plot (Downregulated) ready ✅", type = "default")
     plot_enrichment_bar(enrich_down_res(), "Downregulated Genes")
   })
+
 
   # === Power analysis ===
   observeEvent(input$run_power, {
@@ -913,6 +958,38 @@ output$enrich_down_dt <- renderDT({
       write.csv(rf_predictions_data(), file, row.names = FALSE)
     }
   )
+
+  # ---- Enrichment download handlers ----
+  output$download_enrich_all <- downloadHandler(
+    filename = function() {
+      paste0("enrichment_all_DE_genes_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      req(enrich_all_res())
+      write.csv(enrich_all_res(), file, row.names = FALSE)
+    }
+  )
+
+  output$download_enrich_up <- downloadHandler(
+    filename = function() {
+      paste0("enrichment_upregulated_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      req(enrich_up_res())
+      write.csv(enrich_up_res(), file, row.names = FALSE)
+    }
+  )
+
+  output$download_enrich_down <- downloadHandler(
+    filename = function() {
+      paste0("enrichment_downregulated_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      req(enrich_down_res())
+      write.csv(enrich_down_res(), file, row.names = FALSE)
+    }
+  )
+
 
   output$download_rf_metrics <- downloadHandler(
     filename = function() paste0("rf_metrics_", Sys.Date(), ".csv"),
